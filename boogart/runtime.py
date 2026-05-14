@@ -11,6 +11,8 @@ from boogart.core.state import BoogartState, load_state, save_state
 from boogart.mind.brain import tick_state
 from boogart.mind.context import BrainResult
 from boogart.rendering.sprite import render_boogart_sprite
+from boogart.world.scanner import scan_folder
+from boogart.world.watcher import snapshot_folder, time_aware_comments, update_watcher_memory
 
 
 HEARTBEAT_SECONDS = 45
@@ -33,6 +35,8 @@ def heartbeat(paths: BoogartPaths, now: datetime | None = None) -> BrainResult:
         track_generated_file(state, sprite_path)
 
     append_log(paths.log_file, heartbeat_log_line(state, result, current_time))
+    for comment in watcher_comments(state, active_folder, current_time):
+        append_log(paths.log_file, haunting_log_line(state, comment, current_time))
     save_state(paths.state_file, state)
     return result
 
@@ -41,3 +45,22 @@ def heartbeat_log_line(state: BoogartState, result: BrainResult, now: datetime) 
     day = max(1, (now - parse_timestamp(state.birth_at)).days + 1)
     message = result.message or result.action_id
     return f"[day {day} / {state.stage} / {state.lifecycle}] {message}"
+
+
+def haunting_log_line(state: BoogartState, comment: str, now: datetime) -> str:
+    day = max(1, (now - parse_timestamp(state.birth_at)).days + 1)
+    if state.corruption >= 60:
+        prefix = "SYSTEM COMPROMISE"
+    elif state.corruption >= 25:
+        prefix = "signal"
+    else:
+        prefix = "boogart"
+    return f"[day {day} / {prefix}] {comment}"
+
+
+def watcher_comments(state: BoogartState, folder: Path, now: datetime) -> list[str]:
+    place, observations = scan_folder(folder, generated_files=state.generated_files)
+    snapshot = snapshot_folder(place, observations)
+    comments = update_watcher_memory(state, snapshot)
+    comments.extend(time_aware_comments(state, now.hour))
+    return comments
