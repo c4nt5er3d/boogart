@@ -1,8 +1,11 @@
 from __future__ import annotations
 
 import unittest
+import tempfile
+import sys
+from pathlib import Path
 
-from boogart.content.dialogue import parse_dialogue_markdown
+from boogart.content.dialogue import default_dialogue_path, parse_dialogue_markdown
 
 
 class DialogueTests(unittest.TestCase):
@@ -45,6 +48,21 @@ class DialogueTests(unittest.TestCase):
 
         self.assertEqual(book.choose_for_stage("first_launch", "kitten", tone="cute"), "small words.")
         self.assertEqual(book.choose_for_stage("first_launch", "cat", tone="cute"), "bigger words.")
+
+    def test_default_dialogue_path_uses_pyinstaller_bundle_when_present(self) -> None:
+        original = getattr(sys, "_MEIPASS", None)
+        with tempfile.TemporaryDirectory() as tmp:
+            bundle_root = Path(tmp)
+            bundled = bundle_root / "read.md"
+            bundled.write_text("## first_launch.cute\n- bundled\n", encoding="utf-8")
+            sys._MEIPASS = str(bundle_root)
+            try:
+                self.assertEqual(default_dialogue_path(), bundled)
+            finally:
+                if original is None:
+                    delattr(sys, "_MEIPASS")
+                else:
+                    sys._MEIPASS = original
 
 
 if __name__ == "__main__":

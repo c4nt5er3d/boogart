@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import random
+import sys
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -68,7 +69,17 @@ class DialogueBook:
 
 
 def default_dialogue_path() -> Path:
-    return Path(__file__).resolve().parents[2] / "read.md"
+    bundle_root = getattr(sys, "_MEIPASS", None)
+    if bundle_root:
+        bundled = Path(bundle_root) / "read.md"
+        if bundled.exists():
+            return bundled
+
+    repo_root = Path(__file__).resolve().parents[2] / "read.md"
+    if repo_root.exists():
+        return repo_root
+
+    return Path.cwd() / "read.md"
 
 
 def load_dialogue(path: Path | None = None) -> DialogueBook:

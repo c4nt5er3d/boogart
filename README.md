@@ -16,6 +16,21 @@ Run locally:
 python3.11 -m boogart
 ```
 
+Build a first Windows executable from Windows:
+
+```powershell
+.\scripts\build_windows.ps1 -Clean
+```
+
+The executable will be written to `dist\Boogart.exe`. GitHub Actions also
+builds and uploads a `Boogart-windows` artifact on pushes to `main`.
+
+Clean up Boogart-generated files and local state:
+
+```powershell
+boogart-cleanup --yes
+```
+
 Dialogue lives in `read.md`. Use headings in the form:
 
 ```md
