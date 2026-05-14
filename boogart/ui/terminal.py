@@ -97,7 +97,7 @@ class SetupTerminal:
             "> BOOGART SETUP\n\nwhat should boogart call you?\n\n> ",
         )
 
-        self.name_entry = tk.Entry(
+        self.name_entry = self.tk.Entry(
             self.root,
             textvariable=self.name_var,
             bg="#050505",

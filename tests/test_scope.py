@@ -7,6 +7,7 @@ from pathlib import Path
 from boogart.core.paths import BoogartPaths
 from boogart.core.state import BoogartState, load_state, save_state
 from boogart.runtime import heartbeat
+from boogart.ui import terminal as terminal_ui
 from boogart.ui.terminal import parse_wander_scope
 from boogart.world.scanner import scan_tree
 from boogart.world.scope import ROOM_MARKER, allowed_roots
@@ -70,6 +71,12 @@ class ScopeTests(unittest.TestCase):
         self.assertEqual(parse_wander_scope("1"), "desktop")
         self.assertEqual(parse_wander_scope("rooms"), "marked")
         self.assertEqual(parse_wander_scope("wide"), "home_rooms")
+
+    def test_setup_terminal_uses_stored_tk_reference(self) -> None:
+        source = Path(terminal_ui.__file__).read_text(encoding="utf-8")
+
+        self.assertNotIn("= tk.Entry(", source)
+        self.assertIn("self.tk.Entry", source)
 
 
 def make_paths(root: Path) -> BoogartPaths:
