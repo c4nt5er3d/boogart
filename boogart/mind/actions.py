@@ -14,7 +14,7 @@ from boogart.core.lifecycle import (
     track_generated_file,
 )
 from boogart.mind.context import BrainContext, BrainResult
-from boogart.world.hazards import create_daily_hazard
+from boogart.world.hazards import daily_hazard_name
 from boogart.world.scope import ROOM_MARKER
 
 
@@ -75,9 +75,7 @@ class EatCorpseAction(BrainAction):
 
         corpse_path = Path(str(corpse["corpse_path"]))
         stain_path = corpse_path.with_name("stain_boogart.png")
-        if corpse_path.exists():
-            corpse_path.replace(stain_path)
-            track_generated_file(ctx.state, stain_path)
+        ctx.fs.replace_owned(ctx.state, corpse_path, stain_path)
 
         corpse["eaten"] = True
         ctx.state.corruption = min(100, ctx.state.corruption + 25)
@@ -106,8 +104,7 @@ class EatFoodAction(BrainAction):
             return BrainResult(self.id, "no food")
 
         food = foods[0]
-        if food.path.exists():
-            food.path.unlink()
+        ctx.fs.delete_food(food.path)
         ctx.state.hunger = max(0, ctx.state.hunger - 45)
         ctx.state.affection += 1
         ctx.state.memory["last_food_eaten"] = food.name
@@ -142,8 +139,11 @@ class SeedDailyHazardAction(BrainAction):
         return 180
 
     def run(self, ctx: BrainContext) -> BrainResult:
-        path = create_daily_hazard(ctx.folder, ctx.now.date(), ctx.state.run_id)
-        track_generated_file(ctx.state, path)
+        path = ctx.folder / daily_hazard_name(ctx.now.date(), ctx.state.run_id)
+        if not path.exists():
+            ctx.fs.write_owned_text(ctx.state, path, "unsafe for boogart\n")
+        else:
+            track_generated_file(ctx.state, path)
         ctx.state.memory["last_hazard_day"] = ctx.now.date().isoformat()
         return BrainResult(self.id, f"hazard:{path.name}", path)
 
@@ -185,8 +185,9 @@ class GiveGiftAction(BrainAction):
         name = rng.choice(self.gift_names)
         path = ctx.folder / name
         if not path.exists():
-            path.write_text("for you\n", encoding="utf-8")
-        track_generated_file(ctx.state, path)
+            ctx.fs.write_owned_text(ctx.state, path, "for you\n")
+        else:
+            track_generated_file(ctx.state, path)
         ctx.state.memory["last_gift_at"] = ctx.now.isoformat(timespec="seconds")
         return BrainResult(self.id, f"gift:{name}", path)
 
@@ -217,7 +218,7 @@ class RoamAction(BrainAction):
         destination = rng.choice(candidates)
         old_sprite = ctx.folder / "boogart.png"
         if old_sprite.exists():
-            old_sprite.unlink()
+            ctx.fs.delete_owned(ctx.state, old_sprite)
         ctx.state.current_folder = str(destination)
         ctx.state.memory["last_roam_at"] = ctx.now.isoformat(timespec="seconds")
         return BrainResult(self.id, f"moved to {destination.name}", destination)

@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 
+from boogart.core.filesystem import FileSystemAdapter
 from boogart.core.state import BoogartState
 from boogart.world.observations import FileObservation, PlaceProfile
 
@@ -15,6 +16,7 @@ class BrainContext:
     place: PlaceProfile
     observations: list[FileObservation]
     now: datetime
+    fs: FileSystemAdapter
 
 
 @dataclass(frozen=True)

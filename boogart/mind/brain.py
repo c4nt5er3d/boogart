@@ -3,6 +3,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from pathlib import Path
 
+from boogart.core.filesystem import FileSystemAdapter
 from boogart.core.growth import stage_for_created_at
 from boogart.core.state import BoogartState
 from boogart.mind.actions import DEFAULT_ACTIONS, BrainAction
@@ -27,8 +28,15 @@ class UtilityBrain:
         return result
 
 
-def tick_state(state: BoogartState, folder: Path, now: datetime | None = None, brain: UtilityBrain | None = None) -> BrainResult:
+def tick_state(
+    state: BoogartState,
+    folder: Path,
+    now: datetime | None = None,
+    brain: UtilityBrain | None = None,
+    fs: FileSystemAdapter | None = None,
+) -> BrainResult:
     current_time = now or datetime.now(timezone.utc)
+    filesystem = fs or FileSystemAdapter((folder,))
     place, observations = scan_folder(folder, generated_files=state.generated_files)
-    ctx = BrainContext(state=state, folder=folder, place=place, observations=observations, now=current_time)
+    ctx = BrainContext(state=state, folder=folder, place=place, observations=observations, now=current_time, fs=filesystem)
     return (brain or UtilityBrain()).tick(ctx)

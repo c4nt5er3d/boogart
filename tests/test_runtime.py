@@ -7,7 +7,7 @@ from pathlib import Path
 
 from boogart.core.paths import BoogartPaths
 from boogart.core.state import BoogartState, load_state, save_state, state_from_dict
-from boogart.runtime import heartbeat
+from boogart.runtime import heartbeat, load_frame, run_heartbeat
 
 
 class RuntimeTests(unittest.TestCase):
@@ -84,6 +84,72 @@ class RuntimeTests(unittest.TestCase):
 
             lines = paths.log_file.read_text(encoding="utf-8").splitlines()
             self.assertEqual(sum(1 for line in lines if "mrrp" in line), 1)
+
+    def test_run_heartbeat_returns_pipeline_frame(self) -> None:
+        now = datetime(2026, 1, 1, tzinfo=timezone.utc)
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            desktop = root / "Desktop"
+            data = root / "Data"
+            desktop.mkdir()
+            data.mkdir()
+            paths = BoogartPaths(
+                home=root,
+                desktop=desktop,
+                documents=root / "Documents",
+                downloads=root / "Downloads",
+                pictures=root / "Pictures",
+                music=root / "Music",
+                videos=root / "Videos",
+                data_dir=data,
+                state_file=data / "state.json",
+                log_file=desktop / "boogart_log.txt",
+                desktop_boogart_png=desktop / "boogart.png",
+            )
+            state = BoogartState.new("jay")
+            state.current_folder = str(desktop)
+            save_state(paths.state_file, state)
+
+            frame = run_heartbeat(paths, now)
+
+            self.assertIsNotNone(frame.place)
+            self.assertIsNotNone(frame.appraisal)
+            self.assertEqual(frame.action.action_id, "vocalize")
+            self.assertEqual(frame.messages[0].text, "mrrp")
+
+    def test_load_frame_resets_out_of_scope_current_folder(self) -> None:
+        now = datetime(2026, 1, 1, tzinfo=timezone.utc)
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            desktop = root / "Desktop"
+            data = root / "Data"
+            outside = root / "Outside"
+            desktop.mkdir()
+            data.mkdir()
+            outside.mkdir()
+            paths = BoogartPaths(
+                home=root,
+                desktop=desktop,
+                documents=root / "Documents",
+                downloads=root / "Downloads",
+                pictures=root / "Pictures",
+                music=root / "Music",
+                videos=root / "Videos",
+                data_dir=data,
+                state_file=data / "state.json",
+                log_file=desktop / "boogart_log.txt",
+                desktop_boogart_png=desktop / "boogart.png",
+            )
+            state = BoogartState.new("jay")
+            state.current_folder = str(outside)
+            save_state(paths.state_file, state)
+
+            frame = load_frame(paths, now)
+
+            self.assertEqual(frame.folder, desktop)
+            self.assertEqual(frame.state.current_folder, str(desktop))
 
 
 if __name__ == "__main__":
