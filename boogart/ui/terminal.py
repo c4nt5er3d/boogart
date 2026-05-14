@@ -140,7 +140,7 @@ class SetupTerminal:
         self.on_complete(self.username, scope)
         self.text.configure(state="normal")
         self.text.delete("1.0", "end")
-        self.text.insert("1.0", "> BOOGART SETUP\n\nboogart is here.\n")
+        self.text.insert("1.0", "> BOOGART SETUP\n\ndone.\n")
         self.text.configure(state="disabled")
         self.root.after(900, self.root.destroy)
 
@@ -155,4 +155,4 @@ class ConsoleSetupTerminal:
         username = input("> BOOGART SETUP\n\nwhat should boogart call you?\n\n> ").strip()
         scope = parse_wander_scope(input(f"\n> BOOGART SETUP\n\nhello, {username or 'friend'}.\n\n{WANDER_SCOPE_TEXT}"))
         self.on_complete(username or "friend", scope)
-        print("\nboogart is here.")
+        print("\ndone.")
