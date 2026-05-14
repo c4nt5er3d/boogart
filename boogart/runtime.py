@@ -14,7 +14,7 @@ from boogart.mind.appraisal import AppraisalResult, appraise
 from boogart.mind.brain import tick_state
 from boogart.mind.context import BrainResult
 from boogart.mind.messages import MessageDecision, MessageDirector
-from boogart.mind.needs import apply_need_drift
+from boogart.mind.needs import apply_need_drift, ensure_need_memory
 from boogart.rendering.sprite import render_boogart_sprite
 from boogart.world.observations import FileObservation, PlaceProfile
 from boogart.world.scanner import scan_folder, scan_tree
@@ -88,7 +88,18 @@ def update_needs(frame: HeartbeatFrame) -> None:
 
 def decide_action(frame: HeartbeatFrame) -> None:
     previous_folder = frame.folder
-    frame.action = tick_state(frame.state, frame.folder, frame.now, fs=frame.fs)
+    if frame.place is None or frame.appraisal is None:
+        raise RuntimeError("cannot decide action before perception")
+    frame.action = tick_state(
+        frame.state,
+        frame.folder,
+        frame.now,
+        fs=frame.fs,
+        place=frame.place,
+        observations=frame.observations,
+        appraisal=frame.appraisal,
+        needs=ensure_need_memory(frame.state),
+    )
     frame.active_folder = Path(frame.state.current_folder or previous_folder)
     frame.active_folder.mkdir(parents=True, exist_ok=True)
 

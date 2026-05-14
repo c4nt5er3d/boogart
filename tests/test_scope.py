@@ -7,6 +7,7 @@ from pathlib import Path
 from boogart.core.paths import BoogartPaths
 from boogart.core.state import BoogartState, load_state, save_state
 from boogart.runtime import heartbeat
+from boogart.ui.terminal import parse_wander_scope
 from boogart.world.scanner import scan_tree
 from boogart.world.scope import ROOM_MARKER, allowed_roots
 
@@ -64,6 +65,11 @@ class ScopeTests(unittest.TestCase):
 
             self.assertIn(str(paths.documents), scope_tree["roots"])
             self.assertGreaterEqual(scope_tree["observation_count"], 1)
+
+    def test_setup_scope_parser_accepts_immersive_choices(self) -> None:
+        self.assertEqual(parse_wander_scope("1"), "desktop")
+        self.assertEqual(parse_wander_scope("rooms"), "marked")
+        self.assertEqual(parse_wander_scope("wide"), "home_rooms")
 
 
 def make_paths(root: Path) -> BoogartPaths:

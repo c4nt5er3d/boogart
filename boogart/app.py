@@ -12,12 +12,13 @@ from boogart.runtime import HEARTBEAT_SECONDS, heartbeat
 from boogart.ui.terminal import ConsoleSetupTerminal, SetupTerminal, TkUnavailableError
 
 
-def install_boogart(username: str) -> BoogartState:
+def install_boogart(username: str, wander_scope: str = "desktop") -> BoogartState:
     paths = BoogartPaths.discover()
     paths.ensure()
 
     state = BoogartState.new(username=username)
     state.current_folder = str(paths.desktop)
+    state.wander_scope = wander_scope if wander_scope in {"desktop", "marked", "home_rooms"} else "desktop"
     stage = stage_for_created_at(state.birth_at)
     state.stage = stage.id
     dialogue = load_dialogue()

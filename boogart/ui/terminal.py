@@ -22,8 +22,27 @@ class TkUnavailableError(RuntimeError):
     pass
 
 
+WANDER_SCOPE_TEXT = """\
+how much room should boogart have?
+
+1. desk only
+2. rooms you mark with .boog
+3. desktop, documents, downloads, pictures, music, videos
+
+> """
+
+
+def parse_wander_scope(value: str) -> str:
+    choice = value.strip().lower()
+    if choice in {"2", "marked", "mark", "rooms", ".boog", "boog"}:
+        return "marked"
+    if choice in {"3", "home", "home_rooms", "common", "wide", "wander"}:
+        return "home_rooms"
+    return "desktop"
+
+
 class SetupTerminal:
-    def __init__(self, on_complete: Callable[[str], object]) -> None:
+    def __init__(self, on_complete: Callable[[str, str], object]) -> None:
         try:
             import tkinter as tk
         except ModuleNotFoundError as exc:
@@ -55,7 +74,10 @@ class SetupTerminal:
         self.text.configure(state="disabled")
 
         self.name_var = tk.StringVar()
+        self.scope_var = tk.StringVar()
         self.name_entry: tk.Entry | None = None
+        self.scope_entry: tk.Entry | None = None
+        self.username = "friend"
         self.waiting_for_name = False
         self.root.bind("<Key>", self._continue_to_name)
 
@@ -93,7 +115,29 @@ class SetupTerminal:
 
     def _finish(self, _event: tk.Event) -> None:
         username = self.name_var.get().strip() or "friend"
-        self.on_complete(username)
+        self.username = username
+        self.text.configure(state="normal")
+        self.text.delete("1.0", "end")
+        self.text.insert("1.0", f"> BOOGART SETUP\n\nhello, {username}.\n\n{WANDER_SCOPE_TEXT}")
+        self.scope_entry = self.tk.Entry(
+            self.root,
+            textvariable=self.scope_var,
+            bg="#050505",
+            fg="#d8ffd1",
+            insertbackground="#d8ffd1",
+            relief="flat",
+            borderwidth=0,
+            highlightthickness=0,
+            font=("Consolas", 16),
+        )
+        self.text.window_create("end", window=self.scope_entry)
+        self.text.configure(state="disabled")
+        self.scope_entry.focus_set()
+        self.scope_entry.bind("<Return>", self._finish_scope)
+
+    def _finish_scope(self, _event: tk.Event) -> None:
+        scope = parse_wander_scope(self.scope_var.get())
+        self.on_complete(self.username, scope)
         self.text.configure(state="normal")
         self.text.delete("1.0", "end")
         self.text.insert("1.0", "> BOOGART SETUP\n\nboogart is here.\n")
@@ -102,12 +146,13 @@ class SetupTerminal:
 
 
 class ConsoleSetupTerminal:
-    def __init__(self, on_complete: Callable[[str], object]) -> None:
+    def __init__(self, on_complete: Callable[[str, str], object]) -> None:
         self.on_complete = on_complete
 
     def run(self) -> None:
         print(INTRO_TEXT)
         input()
         username = input("> BOOGART SETUP\n\nwhat should boogart call you?\n\n> ").strip()
-        self.on_complete(username or "friend")
+        scope = parse_wander_scope(input(f"\n> BOOGART SETUP\n\nhello, {username or 'friend'}.\n\n{WANDER_SCOPE_TEXT}"))
+        self.on_complete(username or "friend", scope)
         print("\nboogart is here.")

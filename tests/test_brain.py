@@ -99,6 +99,29 @@ class BrainTests(unittest.TestCase):
             self.assertEqual(state.current_folder, str(destination))
             self.assertFalse(old_sprite.exists())
 
+    def test_roaming_prefers_room_with_food_scent(self) -> None:
+        now = datetime(2026, 1, 3, tzinfo=timezone.utc)
+        state = BoogartState.new("jay")
+        state.birth_at = (now - timedelta(days=2)).isoformat(timespec="seconds")
+        state.stage = "young_cat"
+        state.hunger = 80
+        state.memory["last_hazard_day"] = now.date().isoformat()
+        state.memory["last_gift_at"] = now.isoformat(timespec="seconds")
+
+        with tempfile.TemporaryDirectory() as tmp:
+            folder = Path(tmp)
+            boring = folder / "Boring"
+            food_room = folder / "FoodRoom"
+            boring.mkdir()
+            food_room.mkdir()
+            (food_room / "fish.food").write_text("", encoding="utf-8")
+
+            result = tick_state(state, folder, now)
+
+            self.assertEqual(result.action_id, "roam")
+            self.assertEqual(state.current_folder, str(food_room))
+            self.assertTrue(any(reason.startswith("room score") for reason in state.memory["last_brain_score"]["reasons"]))
+
     def test_rebirth_action_resets_growth_clock(self) -> None:
         now = datetime(2026, 1, 1, tzinfo=timezone.utc)
         state = BoogartState.new("jay")
@@ -130,6 +153,17 @@ class BrainTests(unittest.TestCase):
             self.assertEqual(result.action_id, "eat_corpse")
             self.assertTrue(state.corpse_records[0]["eaten"])
             self.assertTrue((folder / "stain_boogart.png").exists())
+
+    def test_brain_records_winning_action_score(self) -> None:
+        now = datetime(2026, 1, 1, tzinfo=timezone.utc)
+        state = BoogartState.new("jay")
+
+        with tempfile.TemporaryDirectory() as tmp:
+            result = tick_state(state, Path(tmp), now)
+
+            self.assertEqual(result.action_id, "vocalize")
+            self.assertEqual(state.memory["last_brain_score"]["action"], "vocalize")
+            self.assertGreater(state.memory["last_brain_score"]["score"], 0)
 
 
 if __name__ == "__main__":

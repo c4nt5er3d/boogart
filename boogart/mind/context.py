@@ -6,6 +6,7 @@ from pathlib import Path
 
 from boogart.core.filesystem import FileSystemAdapter
 from boogart.core.state import BoogartState
+from boogart.mind.appraisal import AppraisalResult
 from boogart.world.observations import FileObservation, PlaceProfile
 
 
@@ -17,6 +18,8 @@ class BrainContext:
     observations: list[FileObservation]
     now: datetime
     fs: FileSystemAdapter
+    appraisal: AppraisalResult
+    needs: dict[str, int]
 
 
 @dataclass(frozen=True)
