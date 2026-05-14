@@ -15,7 +15,7 @@ def utc_now() -> str:
 class BoogartState:
     run_id: str
     username: str
-    phase: str
+    stage: str
     hunger: int
     neglect: int
     affection: int
@@ -29,7 +29,7 @@ class BoogartState:
         return cls(
             run_id=str(uuid4()),
             username=username.strip() or "friend",
-            phase="kitten",
+            stage="newborn",
             hunger=20,
             neglect=0,
             affection=0,
