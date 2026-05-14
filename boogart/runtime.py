@@ -8,8 +8,11 @@ from boogart.core.lifecycle import track_generated_file
 from boogart.core.log import append_log
 from boogart.core.paths import BoogartPaths
 from boogart.core.state import BoogartState, load_state, save_state
+from boogart.mind.appraisal import appraise
 from boogart.mind.brain import tick_state
 from boogart.mind.context import BrainResult
+from boogart.mind.messages import MessageDecision, MessageDirector
+from boogart.mind.needs import apply_need_drift
 from boogart.rendering.sprite import render_boogart_sprite
 from boogart.world.scanner import scan_folder, scan_tree
 from boogart.world.scope import allowed_roots, is_allowed_path
@@ -29,6 +32,9 @@ def heartbeat(paths: BoogartPaths, now: datetime | None = None) -> BrainResult:
         state.current_folder = str(folder)
     folder.mkdir(parents=True, exist_ok=True)
 
+    place, observations = scan_folder(folder, generated_files=state.generated_files)
+    apply_need_drift(state, appraise(place, observations), current_time)
+
     previous_folder = folder
     result = tick_state(state, folder, current_time)
     active_folder = Path(state.current_folder or previous_folder)
@@ -39,29 +45,17 @@ def heartbeat(paths: BoogartPaths, now: datetime | None = None) -> BrainResult:
         render_boogart_sprite(sprite_path, state.stage)
         track_generated_file(state, sprite_path)
 
-    append_log(paths.log_file, heartbeat_log_line(state, result, current_time))
-    for comment in watcher_comments(state, active_folder, current_time):
-        append_log(paths.log_file, haunting_log_line(state, comment, current_time))
+    comments = watcher_comments(state, active_folder, current_time)
+    for decision in MessageDirector().decisions(state, result, comments, current_time):
+        append_log(paths.log_file, message_log_line(state, decision, current_time))
     update_scope_tree_memory(state, roots)
     save_state(paths.state_file, state)
     return result
 
 
-def heartbeat_log_line(state: BoogartState, result: BrainResult, now: datetime) -> str:
+def message_log_line(state: BoogartState, decision: MessageDecision, now: datetime) -> str:
     day = max(1, (now - parse_timestamp(state.birth_at)).days + 1)
-    message = result.message or result.action_id
-    return f"[day {day} / {state.stage} / {state.lifecycle}] {message}"
-
-
-def haunting_log_line(state: BoogartState, comment: str, now: datetime) -> str:
-    day = max(1, (now - parse_timestamp(state.birth_at)).days + 1)
-    if state.corruption >= 60:
-        prefix = "SYSTEM COMPROMISE"
-    elif state.corruption >= 25:
-        prefix = "signal"
-    else:
-        prefix = "boogart"
-    return f"[day {day} / {prefix}] {comment}"
+    return f"[day {day} / {decision.prefix} / {state.stage}] {decision.text}"
 
 
 def watcher_comments(state: BoogartState, folder: Path, now: datetime) -> list[str]:
