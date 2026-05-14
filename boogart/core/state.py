@@ -19,6 +19,7 @@ class BoogartState:
     lifecycle: str
     incarnation_id: str
     current_folder: str
+    wander_scope: str
     hunger: int
     neglect: int
     affection: int
@@ -44,6 +45,7 @@ class BoogartState:
             lifecycle="alive",
             incarnation_id=str(uuid4()),
             current_folder="",
+            wander_scope="desktop",
             hunger=20,
             neglect=0,
             affection=0,
@@ -76,6 +78,7 @@ def state_from_dict(data: dict[str, object]) -> BoogartState:
         lifecycle=str(data.get("lifecycle") or "alive"),
         incarnation_id=str(data.get("incarnation_id") or uuid4()),
         current_folder=str(data.get("current_folder") or ""),
+        wander_scope=str(data.get("wander_scope") or "desktop"),
         hunger=int(data.get("hunger") or 0),
         neglect=int(data.get("neglect") or 0),
         affection=int(data.get("affection") or 0),

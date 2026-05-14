@@ -29,7 +29,13 @@ class RuntimeTests(unittest.TestCase):
             desktop.mkdir()
             data.mkdir()
             paths = BoogartPaths(
+                home=root,
                 desktop=desktop,
+                documents=root / "Documents",
+                downloads=root / "Downloads",
+                pictures=root / "Pictures",
+                music=root / "Music",
+                videos=root / "Videos",
                 data_dir=data,
                 state_file=data / "state.json",
                 log_file=desktop / "boogart_log.txt",

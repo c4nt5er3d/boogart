@@ -50,6 +50,10 @@ def first_visit_comments(snapshot: FolderSnapshot) -> list[str]:
         comments.append("this room has too many little names.")
     elif "picture_room" in snapshot.folder_tags:
         comments.append("the pictures make this place crowded.")
+    elif "code_room" in snapshot.folder_tags:
+        comments.append("you make little machines here.")
+    elif "paper_room" in snapshot.folder_tags:
+        comments.append("this room has a lot of folded thoughts.")
     return comments
 
 

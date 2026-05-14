@@ -20,6 +20,8 @@ class WorldTests(unittest.TestCase):
                 "resume_final_FINAL.docx",
                 "birthday_photo.jpg",
                 "shortcut.lnk",
+                "pyproject.toml",
+                "main.py",
             ]
             for name in names:
                 (folder / name).write_text("", encoding="utf-8")
@@ -34,6 +36,8 @@ class WorldTests(unittest.TestCase):
             self.assertIn("picture", by_name["birthday_photo.jpg"].tags)
             self.assertIn("personalish", by_name["birthday_photo.jpg"].tags)
             self.assertIn("shortcut", by_name["shortcut.lnk"].tags)
+            self.assertIn("project", by_name["pyproject.toml"].tags)
+            self.assertIn("code", by_name["main.py"].tags)
 
     def test_empty_folder_profile_feels_like_empty_room(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

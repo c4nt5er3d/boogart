@@ -45,5 +45,10 @@ Architecture notes:
   renders Boogart in its current folder, appends the log, and saves state.
 - `boogart/world/watcher.py` stores shallow snapshots of Boogart's current
   folder only; it does not deep-map home folders or write to the clipboard.
+- `wander_scope` controls how far Boogart may look: `desktop`, `marked`
+  folders containing `.boog`, or bounded `home_rooms` such as Desktop,
+  Documents, Downloads, Pictures, Music, and Videos.
+- Tree scans are capped at depth 2, 100 files per folder, and 1000 total
+  observations.
 - Boogart-owned files are tracked in state so cleanup can remove only files the
   game generated.

@@ -15,6 +15,7 @@ from boogart.core.lifecycle import (
 )
 from boogart.mind.context import BrainContext, BrainResult
 from boogart.world.hazards import create_daily_hazard
+from boogart.world.scope import ROOM_MARKER
 
 
 class BrainAction:
@@ -229,6 +230,8 @@ class RoamAction(BrainAction):
             if item.hazard or item.corpse:
                 continue
             if item.name.startswith("."):
+                continue
+            if ctx.state.wander_scope == "marked" and not (item.path / ROOM_MARKER).exists():
                 continue
             candidates.append(item.path)
         return candidates

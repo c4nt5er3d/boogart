@@ -33,7 +33,7 @@ class WatcherTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             desktop = root / "Desktop"
-            current = root / "Current"
+            current = desktop / "Current"
             other = root / "Other"
             data = root / "Data"
             for folder in (desktop, current, other, data):
@@ -41,7 +41,13 @@ class WatcherTests(unittest.TestCase):
             (other / "private_final_FINAL.txt").write_text("", encoding="utf-8")
 
             paths = BoogartPaths(
+                home=root,
                 desktop=desktop,
+                documents=root / "Documents",
+                downloads=root / "Downloads",
+                pictures=root / "Pictures",
+                music=root / "Music",
+                videos=root / "Videos",
                 data_dir=data,
                 state_file=data / "state.json",
                 log_file=desktop / "boogart_log.txt",
@@ -69,7 +75,13 @@ class WatcherTests(unittest.TestCase):
             desktop.mkdir()
             data.mkdir()
             paths = BoogartPaths(
+                home=root,
                 desktop=desktop,
+                documents=root / "Documents",
+                downloads=root / "Downloads",
+                pictures=root / "Pictures",
+                music=root / "Music",
+                videos=root / "Videos",
                 data_dir=data,
                 state_file=data / "state.json",
                 log_file=desktop / "boogart_log.txt",

@@ -11,7 +11,8 @@ from boogart.core.state import BoogartState, load_state, save_state
 from boogart.mind.brain import tick_state
 from boogart.mind.context import BrainResult
 from boogart.rendering.sprite import render_boogart_sprite
-from boogart.world.scanner import scan_folder
+from boogart.world.scanner import scan_folder, scan_tree
+from boogart.world.scope import allowed_roots, is_allowed_path
 from boogart.world.watcher import snapshot_folder, time_aware_comments, update_watcher_memory
 
 
@@ -21,7 +22,11 @@ HEARTBEAT_SECONDS = 45
 def heartbeat(paths: BoogartPaths, now: datetime | None = None) -> BrainResult:
     current_time = now or datetime.now(timezone.utc)
     state = load_state(paths.state_file)
+    roots = allowed_roots(paths, state)
     folder = Path(state.current_folder or paths.desktop)
+    if not is_allowed_path(folder, roots):
+        folder = paths.desktop
+        state.current_folder = str(folder)
     folder.mkdir(parents=True, exist_ok=True)
 
     previous_folder = folder
@@ -37,6 +42,7 @@ def heartbeat(paths: BoogartPaths, now: datetime | None = None) -> BrainResult:
     append_log(paths.log_file, heartbeat_log_line(state, result, current_time))
     for comment in watcher_comments(state, active_folder, current_time):
         append_log(paths.log_file, haunting_log_line(state, comment, current_time))
+    update_scope_tree_memory(state, roots)
     save_state(paths.state_file, state)
     return result
 
@@ -64,3 +70,17 @@ def watcher_comments(state: BoogartState, folder: Path, now: datetime) -> list[s
     comments = update_watcher_memory(state, snapshot)
     comments.extend(time_aware_comments(state, now.hour))
     return comments
+
+
+def update_scope_tree_memory(state: BoogartState, roots: tuple[Path, ...]) -> None:
+    observations = scan_tree(roots, generated_files=state.generated_files)
+    tag_counts: dict[str, int] = {}
+    for observation in observations:
+        for tag in observation.tags:
+            tag_counts[tag] = tag_counts.get(tag, 0) + 1
+
+    state.global_memory["scope_tree"] = {
+        "roots": [str(root) for root in roots],
+        "observation_count": len(observations),
+        "tag_counts": tag_counts,
+    }
