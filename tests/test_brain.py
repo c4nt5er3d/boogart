@@ -77,6 +77,28 @@ class BrainTests(unittest.TestCase):
             self.assertTrue(result.path.exists())
             self.assertIn(str(result.path), state.generated_files)
 
+    def test_hungry_curious_boogart_can_roam_to_shallow_folder(self) -> None:
+        now = datetime(2026, 1, 3, tzinfo=timezone.utc)
+        state = BoogartState.new("jay")
+        state.birth_at = (now - timedelta(days=2)).isoformat(timespec="seconds")
+        state.stage = "young_cat"
+        state.hunger = 80
+        state.memory["last_hazard_day"] = now.date().isoformat()
+        state.memory["last_gift_at"] = now.isoformat(timespec="seconds")
+
+        with tempfile.TemporaryDirectory() as tmp:
+            folder = Path(tmp)
+            destination = folder / "InterestingFolder"
+            destination.mkdir()
+            old_sprite = folder / "boogart.png"
+            old_sprite.write_text("", encoding="utf-8")
+
+            result = tick_state(state, folder, now)
+
+            self.assertEqual(result.action_id, "roam")
+            self.assertEqual(state.current_folder, str(destination))
+            self.assertFalse(old_sprite.exists())
+
     def test_rebirth_action_resets_growth_clock(self) -> None:
         now = datetime(2026, 1, 1, tzinfo=timezone.utc)
         state = BoogartState.new("jay")

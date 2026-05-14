@@ -41,5 +41,7 @@ Architecture notes:
 - `boogart/mind` runs a tiny utility brain where actions score themselves and
   the highest valid action runs.
 - `boogart/core/lifecycle.py` owns death, corpse rot, and delayed rebirth.
+- `boogart/runtime.py` runs the heartbeat that loads state, ticks the brain,
+  renders Boogart in its current folder, appends the log, and saves state.
 - Boogart-owned files are tracked in state so cleanup can remove only files the
   game generated.

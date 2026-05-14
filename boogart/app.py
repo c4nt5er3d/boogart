@@ -8,6 +8,7 @@ from boogart.core.log import write_log
 from boogart.core.paths import BoogartPaths
 from boogart.core.state import BoogartState, save_state
 from boogart.rendering.sprite import render_boogart_sprite
+from boogart.runtime import HEARTBEAT_SECONDS, heartbeat
 from boogart.ui.terminal import ConsoleSetupTerminal, SetupTerminal, TkUnavailableError
 
 
@@ -16,6 +17,7 @@ def install_boogart(username: str) -> BoogartState:
     paths.ensure()
 
     state = BoogartState.new(username=username)
+    state.current_folder = str(paths.desktop)
     stage = stage_for_created_at(state.birth_at)
     state.stage = stage.id
     dialogue = load_dialogue()
@@ -50,8 +52,32 @@ def install_boogart(username: str) -> BoogartState:
 
 
 def main() -> None:
+    paths = BoogartPaths.discover()
+    paths.ensure()
+
+    if not paths.state_file.exists():
+        try:
+            terminal = SetupTerminal(on_complete=install_boogart)
+        except TkUnavailableError:
+            terminal = ConsoleSetupTerminal(on_complete=install_boogart)
+        terminal.run()
+
+    run_heartbeat_loop(paths)
+
+
+def run_heartbeat_loop(paths: BoogartPaths) -> None:
     try:
-        terminal = SetupTerminal(on_complete=install_boogart)
-    except TkUnavailableError:
-        terminal = ConsoleSetupTerminal(on_complete=install_boogart)
-    terminal.run()
+        import tkinter as tk
+    except ModuleNotFoundError:
+        heartbeat(paths)
+        return
+
+    root = tk.Tk()
+    root.withdraw()
+
+    def pulse() -> None:
+        heartbeat(paths)
+        root.after(HEARTBEAT_SECONDS * 1000, pulse)
+
+    pulse()
+    root.mainloop()

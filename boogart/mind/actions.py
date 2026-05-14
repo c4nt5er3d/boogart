@@ -190,6 +190,50 @@ class GiveGiftAction(BrainAction):
         return BrainResult(self.id, f"gift:{name}", path)
 
 
+class RoamAction(BrainAction):
+    id = "roam"
+
+    def score(self, ctx: BrainContext) -> int:
+        if ctx.state.lifecycle != "alive":
+            return 0
+        if ctx.state.stage in {"newborn", "baby_kitten"}:
+            return 0
+        if ctx.place.hazard_count:
+            return 0
+        if ctx.state.memory.get("last_roam_at") and ctx.now - _parse_datetime(str(ctx.state.memory["last_roam_at"])) < timedelta(hours=1):
+            return 0
+        candidates = self._candidates(ctx)
+        if not candidates:
+            return 0
+        return 70 + ctx.state.hunger + len(candidates)
+
+    def run(self, ctx: BrainContext) -> BrainResult:
+        candidates = self._candidates(ctx)
+        if not candidates:
+            return BrainResult(self.id, "nowhere to go")
+
+        rng = random.Random(f"{ctx.state.incarnation_id}:{ctx.now.isoformat(timespec='hours')}:roam")
+        destination = rng.choice(candidates)
+        old_sprite = ctx.folder / "boogart.png"
+        if old_sprite.exists():
+            old_sprite.unlink()
+        ctx.state.current_folder = str(destination)
+        ctx.state.memory["last_roam_at"] = ctx.now.isoformat(timespec="seconds")
+        return BrainResult(self.id, f"moved to {destination.name}", destination)
+
+    def _candidates(self, ctx: BrainContext) -> list[Path]:
+        candidates: list[Path] = []
+        for item in ctx.observations:
+            if item.kind != "folder":
+                continue
+            if item.hazard or item.corpse:
+                continue
+            if item.name.startswith("."):
+                continue
+            candidates.append(item.path)
+        return candidates
+
+
 class VocalizeAction(BrainAction):
     id = "vocalize"
 
@@ -209,6 +253,7 @@ DEFAULT_ACTIONS: tuple[BrainAction, ...] = (
     ReactToCorpseAction(),
     GiveGiftAction(),
     SeedDailyHazardAction(),
+    RoamAction(),
     VocalizeAction(),
 )
 
