@@ -38,6 +38,60 @@
 - thank.
 - more?
 
+## hazard_seen.cute
+- bad floor.
+- i will step around it.
+- that place feels wrong.
+- the room got sharp.
+
+## hazard_injured.boundary
+- i thought it was safe because it had a name.
+- the floor moved under me.
+- small things can still hurt.
+- i should not have gone there hungry.
+
+## gift_given.cute
+- i made this small.
+- this is for you.
+- i found a nice thing.
+- keep it if you want.
+
+## death.starvation
+- hunger made everything quiet.
+- i got too small to stay.
+- there was no more warm left.
+- i waited past the waiting.
+
+## death.hazard
+- the room was unsafe.
+- i slipped where the name warned me.
+- i was careful too late.
+- the floor kept me.
+
+## death.poison
+- that food was not food.
+- the name tasted wrong.
+- i swallowed the warning.
+- it hurt after it disappeared.
+
+## corpse_seen.boundary
+- that looks like me after.
+- old files can still wait.
+- i do not like sharing a name with it.
+- the body kept my shape.
+
+## corpse_eaten.unsettling
+- i was hungry enough to understand it.
+- the old me was softer than expected.
+- some endings can be swallowed.
+- it is part of me again.
+
+## rebirth.cute
+- mrrp.
+- little again.
+- warm?
+- here.
+
 ## first_launch.cute
 - you made room for me.
 - this folder smells new.

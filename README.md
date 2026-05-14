@@ -33,3 +33,13 @@ For baby-stage sounds, use:
 Example triggers include `first_launch`, `food_found`, and `dead_boogart_found`.
 Growth stages are `newborn`, `baby_kitten`, `kitten`, `young_cat`, `cat`,
 `first_shift`, `changed`, and `final`.
+
+Architecture notes:
+
+- `boogart/world` scans shallow filenames and classifies symbolic tags without
+  reading file contents.
+- `boogart/mind` runs a tiny utility brain where actions score themselves and
+  the highest valid action runs.
+- `boogart/core/lifecycle.py` owns death, corpse rot, and delayed rebirth.
+- Boogart-owned files are tracked in state so cleanup can remove only files the
+  game generated.
