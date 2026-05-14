@@ -7,7 +7,6 @@ from uuid import uuid4
 
 from boogart.core.growth import parse_timestamp
 from boogart.core.state import BoogartState
-from boogart.rendering.sprite import render_boogart_sprite
 from boogart.world.observations import FileObservation, PlaceProfile
 
 
@@ -20,89 +19,94 @@ class DeathCause:
     reason: str
 
 
+@dataclass(frozen=True)
+class DeathRuleEvaluation:
+    cause: DeathCause | None = None
+    memory_updates: dict[str, object] | None = None
+    memory_deletes: tuple[str, ...] = ()
+
+
 class DeathRule:
     id = "death"
 
-    def cause(self, state: BoogartState, place: PlaceProfile, observations: list[FileObservation], now: datetime) -> DeathCause | None:
+    def evaluate(self, state: BoogartState, place: PlaceProfile, observations: list[FileObservation], now: datetime) -> DeathRuleEvaluation:
         raise NotImplementedError
 
 
 class StarvationRule(DeathRule):
     id = "starvation"
 
-    def cause(self, state: BoogartState, place: PlaceProfile, observations: list[FileObservation], now: datetime) -> DeathCause | None:
+    def evaluate(self, state: BoogartState, place: PlaceProfile, observations: list[FileObservation], now: datetime) -> DeathRuleEvaluation:
         critical_since = state.memory.get("critical_hunger_since")
         if state.hunger < 100:
-            state.memory.pop("critical_hunger_since", None)
-            return None
+            return DeathRuleEvaluation(memory_deletes=("critical_hunger_since",))
 
         if not critical_since:
-            state.memory["critical_hunger_since"] = now.isoformat(timespec="seconds")
-            return None
+            return DeathRuleEvaluation(memory_updates={"critical_hunger_since": now.isoformat(timespec="seconds")})
 
         if now - parse_timestamp(str(critical_since)) >= timedelta(hours=6):
-            return DeathCause("starvation", "hunger stayed critical too long")
-        return None
+            return DeathRuleEvaluation(cause=DeathCause("starvation", "hunger stayed critical too long"))
+        return DeathRuleEvaluation()
 
 
 class PoisonFoodRule(DeathRule):
     id = "poison"
     poison_words = {"battery", "glass", "wire", "poison", "dead_boogart", "rot"}
 
-    def cause(self, state: BoogartState, place: PlaceProfile, observations: list[FileObservation], now: datetime) -> DeathCause | None:
+    def evaluate(self, state: BoogartState, place: PlaceProfile, observations: list[FileObservation], now: datetime) -> DeathRuleEvaluation:
         eaten = str(state.memory.get("last_food_eaten", "")).lower()
         if eaten and any(word in eaten for word in self.poison_words):
-            return DeathCause("poison", f"bad food: {eaten}")
-        return None
+            return DeathRuleEvaluation(cause=DeathCause("poison", f"bad food: {eaten}"))
+        return DeathRuleEvaluation()
 
 
 class HazardRule(DeathRule):
     id = "hazard"
 
-    def cause(self, state: BoogartState, place: PlaceProfile, observations: list[FileObservation], now: datetime) -> DeathCause | None:
+    def evaluate(self, state: BoogartState, place: PlaceProfile, observations: list[FileObservation], now: datetime) -> DeathRuleEvaluation:
         if place.hazard_count and state.hunger >= 70:
-            return DeathCause("hazard", "injured in an unsafe folder while weak")
-        return None
+            return DeathRuleEvaluation(cause=DeathCause("hazard", "injured in an unsafe folder while weak"))
+        return DeathRuleEvaluation()
 
 
 class NeglectRule(DeathRule):
     id = "neglect"
 
-    def cause(self, state: BoogartState, place: PlaceProfile, observations: list[FileObservation], now: datetime) -> DeathCause | None:
+    def evaluate(self, state: BoogartState, place: PlaceProfile, observations: list[FileObservation], now: datetime) -> DeathRuleEvaluation:
         if state.neglect >= 7 and state.hunger >= 80:
-            return DeathCause("neglect", "neglect and hunger collapsed together")
-        return None
+            return DeathRuleEvaluation(cause=DeathCause("neglect", "neglect and hunger collapsed together"))
+        return DeathRuleEvaluation()
 
 
 class CorpseShockRule(DeathRule):
     id = "corpse_shock"
 
-    def cause(self, state: BoogartState, place: PlaceProfile, observations: list[FileObservation], now: datetime) -> DeathCause | None:
+    def evaluate(self, state: BoogartState, place: PlaceProfile, observations: list[FileObservation], now: datetime) -> DeathRuleEvaluation:
         if place.corpse_count and state.stage in {"newborn", "baby_kitten"} and state.neglect >= 3:
-            return DeathCause("corpse_shock", "too fragile to understand the body")
-        return None
+            return DeathRuleEvaluation(cause=DeathCause("corpse_shock", "too fragile to understand the body"))
+        return DeathRuleEvaluation()
 
 
 class RotExposureRule(DeathRule):
     id = "rot_exposure"
 
-    def cause(self, state: BoogartState, place: PlaceProfile, observations: list[FileObservation], now: datetime) -> DeathCause | None:
+    def evaluate(self, state: BoogartState, place: PlaceProfile, observations: list[FileObservation], now: datetime) -> DeathRuleEvaluation:
         for corpse in state.corpse_records:
             if corpse.get("eaten"):
                 continue
             if corpse.get("folder_path") == str(place.path) and rot_stage(str(corpse.get("death_time")), now) in {"rotting", "old"}:
                 if state.hunger >= 70 or state.corruption >= 40:
-                    return DeathCause("rot_exposure", "stayed too close to an old body")
-        return None
+                    return DeathRuleEvaluation(cause=DeathCause("rot_exposure", "stayed too close to an old body"))
+        return DeathRuleEvaluation()
 
 
 class LateStageFailureRule(DeathRule):
     id = "late_stage_failure"
 
-    def cause(self, state: BoogartState, place: PlaceProfile, observations: list[FileObservation], now: datetime) -> DeathCause | None:
+    def evaluate(self, state: BoogartState, place: PlaceProfile, observations: list[FileObservation], now: datetime) -> DeathRuleEvaluation:
         if state.stage in {"changed", "final"} and state.neglect >= 9 and state.corruption >= 80:
-            return DeathCause("late_stage_failure", "the final form could not hold")
-        return None
+            return DeathRuleEvaluation(cause=DeathCause("late_stage_failure", "the final form could not hold"))
+        return DeathRuleEvaluation()
 
 
 DEATH_RULES: tuple[DeathRule, ...] = (
@@ -117,12 +121,28 @@ DEATH_RULES: tuple[DeathRule, ...] = (
 
 
 def first_death_cause(state: BoogartState, place: PlaceProfile, observations: list[FileObservation], now: datetime | None = None) -> DeathCause | None:
+    return evaluate_death_rules(state, place, observations, now).cause
+
+
+def evaluate_death_rules(state: BoogartState, place: PlaceProfile, observations: list[FileObservation], now: datetime | None = None) -> DeathRuleEvaluation:
     current_time = now or datetime.now(timezone.utc)
+    merged_updates: dict[str, object] = {}
+    merged_deletes: list[str] = []
     for rule in DEATH_RULES:
-        cause = rule.cause(state, place, observations, current_time)
-        if cause:
-            return cause
-    return None
+        evaluation = rule.evaluate(state, place, observations, current_time)
+        if evaluation.memory_updates:
+            merged_updates.update(evaluation.memory_updates)
+        merged_deletes.extend(evaluation.memory_deletes)
+        if evaluation.cause:
+            return DeathRuleEvaluation(evaluation.cause, merged_updates or None, tuple(merged_deletes))
+    return DeathRuleEvaluation(memory_updates=merged_updates or None, memory_deletes=tuple(merged_deletes))
+
+
+def apply_death_rule_updates(state: BoogartState, evaluation: DeathRuleEvaluation) -> None:
+    for key in evaluation.memory_deletes:
+        state.memory.pop(key, None)
+    if evaluation.memory_updates:
+        state.memory.update(evaluation.memory_updates)
 
 
 def kill_boogart(state: BoogartState, folder: Path, cause: DeathCause, now: datetime | None = None) -> Path:
@@ -150,7 +170,6 @@ def kill_boogart(state: BoogartState, folder: Path, cause: DeathCause, now: date
         }
     )
     track_generated_file(state, corpse_path)
-    render_boogart_sprite(corpse_path, "final")
     return corpse_path
 
 

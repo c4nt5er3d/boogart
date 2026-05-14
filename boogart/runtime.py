@@ -94,6 +94,10 @@ def decide_action(frame: HeartbeatFrame) -> None:
 
 
 def render_frame(frame: HeartbeatFrame) -> None:
+    if frame.action and frame.action.action_id == "die" and frame.action.path:
+        render_boogart_sprite(frame.action.path, "final")
+        track_generated_file(frame.state, frame.action.path)
+        return
     if frame.state.lifecycle != "alive":
         return
     active_folder = frame.active_folder or frame.folder

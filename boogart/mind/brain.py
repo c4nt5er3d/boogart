@@ -5,6 +5,7 @@ from pathlib import Path
 
 from boogart.core.filesystem import FileSystemAdapter
 from boogart.core.growth import stage_for_created_at
+from boogart.core.lifecycle import apply_death_rule_updates, evaluate_death_rules
 from boogart.core.state import BoogartState
 from boogart.mind.actions import DEFAULT_ACTIONS, BrainAction
 from boogart.mind.context import BrainContext, BrainResult
@@ -19,6 +20,7 @@ class UtilityBrain:
         if ctx.state.lifecycle == "alive":
             ctx.state.stage = stage_for_created_at(ctx.state.birth_at, ctx.now).id
 
+        apply_death_rule_updates(ctx.state, evaluate_death_rules(ctx.state, ctx.place, ctx.observations, ctx.now))
         scored = [(action.score(ctx), action) for action in self.actions]
         score, action = max(scored, key=lambda item: item[0])
         if score <= 0:

@@ -5,8 +5,17 @@ import unittest
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-from boogart.core.lifecycle import DeathCause, first_death_cause, can_rebirth, kill_boogart, rebirth, rot_stage
-from boogart.core.state import BoogartState
+from boogart.core.lifecycle import (
+    DeathCause,
+    apply_death_rule_updates,
+    can_rebirth,
+    evaluate_death_rules,
+    first_death_cause,
+    kill_boogart,
+    rebirth,
+    rot_stage,
+)
+from boogart.core.state import BoogartState, corpse_records, state_from_dict
 from boogart.world.observations import PlaceProfile
 
 
@@ -18,7 +27,7 @@ class LifecycleTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             corpse = kill_boogart(state, Path(tmp), DeathCause("hazard", "unsafe"), now)
 
-            self.assertTrue(corpse.exists())
+            self.assertFalse(corpse.exists())
             self.assertEqual(state.lifecycle, "waiting_rebirth")
             self.assertEqual(state.death_cause, "hazard")
             self.assertEqual(len(state.corpse_records), 1)
@@ -63,6 +72,37 @@ class LifecycleTests(unittest.TestCase):
         starving.hunger = 100
         starving.memory["critical_hunger_since"] = (now - timedelta(hours=7)).isoformat(timespec="seconds")
         self.assertEqual(first_death_cause(starving, place, [], now).id, "starvation")
+
+    def test_death_rule_evaluation_is_pure_until_updates_are_applied(self) -> None:
+        now = datetime(2026, 1, 1, 12, tzinfo=timezone.utc)
+        place = PlaceProfile(Path("/tmp"), "tmp", 0, 0, 0, 0, 0)
+        state = BoogartState.new("jay")
+        state.hunger = 100
+
+        evaluation = evaluate_death_rules(state, place, [], now)
+
+        self.assertIsNone(evaluation.cause)
+        self.assertNotIn("critical_hunger_since", state.memory)
+        apply_death_rule_updates(state, evaluation)
+        self.assertIn("critical_hunger_since", state.memory)
+
+    def test_state_migration_adds_schema_and_typed_corpse_records(self) -> None:
+        state = state_from_dict(
+            {
+                "username": "jay",
+                "corpse_records": [
+                    {
+                        "cause": "hazard",
+                        "death_time": "2026-01-01T00:00:00+00:00",
+                        "folder_path": "/tmp",
+                        "corpse_path": "/tmp/dead_boogart.png",
+                    }
+                ],
+            }
+        )
+
+        self.assertEqual(state.schema_version, 2)
+        self.assertEqual(corpse_records(state)[0].cause, "hazard")
 
 
 if __name__ == "__main__":

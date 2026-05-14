@@ -45,7 +45,7 @@ class BrainTests(unittest.TestCase):
 
             self.assertEqual(result.action_id, "die")
             self.assertEqual(state.death_cause, "hazard")
-            self.assertTrue((Path(tmp) / "dead_boogart.png").exists())
+            self.assertEqual(state.corpse_records[0]["corpse_path"], str(Path(tmp) / "dead_boogart.png"))
 
     def test_gift_is_given_after_hazard_seed_for_today(self) -> None:
         now = datetime(2026, 1, 3, tzinfo=timezone.utc)
@@ -121,6 +121,7 @@ class BrainTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             folder = Path(tmp)
             kill_boogart(state, folder, DeathCause("hazard", "unsafe"), now - timedelta(days=1))
+            (folder / "dead_boogart.png").write_text("", encoding="utf-8")
             state.lifecycle = "alive"
             state.hunger = 100
             state.corruption = 50
