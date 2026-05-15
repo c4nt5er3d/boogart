@@ -32,6 +32,24 @@ Boogart scans filenames only. He does not read file contents, modify unrelated f
 python3 -m boogart
 ```
 
+Run one heartbeat without opening the setup terminal:
+
+```bash
+python3 -m boogart --once --name jay
+```
+
+Run a fast local playtest. This creates Boogart if needed, speeds up timers, runs a finite number of heartbeats, prints a short summary, and exits:
+
+```bash
+python3 -m boogart --simulate 48 --step-minutes 15 --name jay
+```
+
+For a live accelerated loop:
+
+```bash
+python3 -m boogart --dev-fast --name jay
+```
+
 Clean up generated files and private state:
 
 ```bash

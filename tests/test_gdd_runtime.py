@@ -11,7 +11,7 @@ from boogart.cleanup import cleanup
 from boogart.core.paths import BoogartPaths
 from boogart.core.state import BoogartState, load_state, save_state
 from boogart.rendering.sprite import render_boogart_sprite
-from boogart.runtime import run_heartbeat
+from boogart.runtime import RuntimeConfig, run_heartbeat, run_simulation
 
 
 class GddRuntimeTests(unittest.TestCase):
@@ -103,6 +103,26 @@ class GddRuntimeTests(unittest.TestCase):
             self.assertFalse(paths.state_file.exists())
             self.assertFalse(paths.desktop_boogart_png.exists())
             self.assertFalse(paths.log_file.exists())
+
+    def test_dev_fast_simulation_advances_without_waiting_real_days(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            paths = make_paths(root)
+            install_boogart("jay", paths)
+            now = datetime.fromisoformat(load_state(paths.state_file).birth_time)
+
+            result = run_simulation(
+                paths,
+                ticks=8,
+                step=timedelta(minutes=10),
+                start=now,
+                config=RuntimeConfig(dev_fast=True),
+            )
+            saved = load_state(paths.state_file)
+
+            self.assertEqual(result.ticks, 8)
+            self.assertGreaterEqual(saved.phase, 2)
+            self.assertIn("boogart.png", result.files)
 
 
 def make_paths(root: Path) -> BoogartPaths:

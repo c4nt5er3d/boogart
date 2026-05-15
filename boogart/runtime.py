@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import os
 import random
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
@@ -30,23 +31,49 @@ SENSITIVE_NAME_WORDS = {
 }
 
 
+@dataclass(frozen=True)
+class RuntimeConfig:
+    dev_fast: bool = False
+
+    @classmethod
+    def from_env(cls) -> "RuntimeConfig":
+        return cls(dev_fast=os.environ.get("BOOGART_DEV_FAST", "").lower() in {"1", "true", "yes", "on"})
+
+
 @dataclass
 class HeartbeatFrame:
     paths: BoogartPaths
     now: datetime
     state: BoogartState
+    config: RuntimeConfig = field(default_factory=RuntimeConfig)
     events: list[str] = field(default_factory=list)
     body_path: Path | None = None
 
 
-def heartbeat(paths: BoogartPaths, now: datetime | None = None) -> str:
-    frame = run_heartbeat(paths, now)
+@dataclass(frozen=True)
+class SimulationResult:
+    ticks: int
+    events: tuple[str, ...]
+    files: tuple[str, ...]
+    lifecycle: str
+    phase: int
+    hunger: int
+    current_folder: str
+
+
+def heartbeat(paths: BoogartPaths, now: datetime | None = None, config: RuntimeConfig | None = None) -> str:
+    frame = run_heartbeat(paths, now, config)
     return frame.events[-1] if frame.events else "idle"
 
 
-def run_heartbeat(paths: BoogartPaths, now: datetime | None = None) -> HeartbeatFrame:
+def run_heartbeat(paths: BoogartPaths, now: datetime | None = None, config: RuntimeConfig | None = None) -> HeartbeatFrame:
     paths.ensure()
-    frame = HeartbeatFrame(paths=paths, now=now or datetime.now(timezone.utc), state=load_state(paths.state_file))
+    frame = HeartbeatFrame(
+        paths=paths,
+        now=now or datetime.now(timezone.utc),
+        state=load_state(paths.state_file),
+        config=config or RuntimeConfig.from_env(),
+    )
     reset_daily_caps(frame.state, frame.now)
     reconcile_scope(frame)
     update_phase(frame)
@@ -65,6 +92,32 @@ def run_heartbeat(paths: BoogartPaths, now: datetime | None = None) -> Heartbeat
     frame.state.updated_at = frame.state.last_active_at
     save_state(paths.state_file, frame.state)
     return frame
+
+
+def run_simulation(
+    paths: BoogartPaths,
+    ticks: int,
+    step: timedelta = timedelta(minutes=15),
+    start: datetime | None = None,
+    config: RuntimeConfig | None = None,
+) -> SimulationResult:
+    current = start or datetime.now(timezone.utc)
+    runtime_config = config or RuntimeConfig(dev_fast=True)
+    events: list[str] = []
+    for index in range(max(0, ticks)):
+        frame = run_heartbeat(paths, current + (step * index), runtime_config)
+        events.extend(frame.events)
+    state = load_state(paths.state_file)
+    files = tuple(sorted(path.name for path in paths.desktop.iterdir())) if paths.desktop.exists() else ()
+    return SimulationResult(
+        ticks=max(0, ticks),
+        events=tuple(events),
+        files=files,
+        lifecycle=state.lifecycle,
+        phase=state.phase,
+        hunger=state.hunger,
+        current_folder=Path(state.current_folder).name if state.current_folder else "",
+    )
 
 
 def reset_daily_caps(state: BoogartState, now: datetime) -> None:
@@ -87,6 +140,11 @@ def reconcile_scope(frame: HeartbeatFrame) -> None:
 
 def update_phase(frame: HeartbeatFrame) -> None:
     slowdown = min(frame.state.affection // 3, 60)
+    if frame.config.dev_fast:
+        age = frame.now - parse_timestamp(frame.state.birth_time)
+        fast_phase = min(6, max(1, int(age.total_seconds() // (60 * 30)) + 1))
+        frame.state.phase = max(frame.state.phase, fast_phase)
+        return
     frame.state.phase = max(frame.state.phase, phase_for_birth_time(frame.state.birth_time, frame.now, slowdown))
 
 
@@ -119,7 +177,8 @@ def inspect_body(frame: HeartbeatFrame) -> None:
     copies = find_body_copies(frame)
     if copies:
         frame.state.copy_count += len(copies)
-        delay_until = frame.now + timedelta(minutes=random_for(frame.state, "copy-delay").randint(60, 180))
+        minimum, maximum = (3, 7) if frame.config.dev_fast else (60, 180)
+        delay_until = frame.now + timedelta(minutes=random_for(frame.state, "copy-delay").randint(minimum, maximum))
         frame.state.memory["copy_reaction_after"] = delay_until.isoformat(timespec="seconds")
         frame.state.memory["copy_reaction_paths"] = [str(path) for path in copies[:3]]
 
@@ -146,7 +205,8 @@ def tick_hunger(frame: HeartbeatFrame) -> None:
     if frame.now < parse_timestamp(frame.state.next_hunger_at):
         return
     frame.state.hunger = min(100, frame.state.hunger + random_for(frame.state, "hunger").randint(8, 18))
-    frame.state.next_hunger_at = (frame.now + jitter(frame.state, "hunger-next", 25, 95)).isoformat(timespec="seconds")
+    hunger_min, hunger_max = (2, 5) if frame.config.dev_fast else (25, 95)
+    frame.state.next_hunger_at = (frame.now + jitter(frame.state, "hunger-next", hunger_min, hunger_max)).isoformat(timespec="seconds")
     if frame.state.hunger >= 90:
         frame.state.neglect += 1
         note(frame, "hungry again.")
@@ -239,7 +299,8 @@ def maintain_husk(frame: HeartbeatFrame) -> None:
     folder = Path(frame.state.current_folder or frame.paths.desktop)
     corpse = folder / "boogart_dead.png"
     husk = folder / "boogart_husk.png"
-    if frame.now - parse_timestamp(str(died_at)) >= timedelta(hours=48):
+    husk_after = timedelta(minutes=10) if frame.config.dev_fast else timedelta(hours=48)
+    if frame.now - parse_timestamp(str(died_at)) >= husk_after:
         if not husk.exists():
             render_boogart_sprite(husk, "wrong", metadata=body_metadata(frame.state, "wrong"))
             remember_generated_file(frame.state, husk)
@@ -383,11 +444,13 @@ def renamed_body_candidate(folder: Path, state: BoogartState) -> Path | None:
 
 
 def schedule_next_move(frame: HeartbeatFrame) -> None:
-    frame.state.next_move_at = (frame.now + jitter(frame.state, "move-next", 4, 39)).isoformat(timespec="seconds")
+    minimum, maximum = (1, 3) if frame.config.dev_fast else (4, 39)
+    frame.state.next_move_at = (frame.now + jitter(frame.state, "move-next", minimum, maximum)).isoformat(timespec="seconds")
 
 
 def schedule_next_txt(frame: HeartbeatFrame) -> None:
-    frame.state.next_txt_at = (frame.now + jitter(frame.state, "txt-next", 20 * 60, 32 * 60)).isoformat(timespec="seconds")
+    minimum, maximum = (8, 15) if frame.config.dev_fast else (20 * 60, 32 * 60)
+    frame.state.next_txt_at = (frame.now + jitter(frame.state, "txt-next", minimum, maximum)).isoformat(timespec="seconds")
 
 
 def jitter(state: BoogartState, salt: str, minimum_minutes: int, maximum_minutes: int) -> timedelta:
