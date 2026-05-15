@@ -124,6 +124,27 @@ class GddRuntimeTests(unittest.TestCase):
             self.assertGreaterEqual(saved.phase, 2)
             self.assertIn("boogart.png", result.files)
 
+    def test_windows_discovery_prefers_known_desktop_over_userprofile_fallback(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            visible_desktop = root / "OneDrive" / "Desktop"
+            fallback_desktop = root / "Profile" / "Desktop"
+            visible_desktop.mkdir(parents=True)
+
+            def known_folder(name: str) -> Path | None:
+                return visible_desktop if name == "Desktop" else None
+
+            with (
+                patch("boogart.core.paths.sys.platform", "win32"),
+                patch("boogart.core.paths.Path.home", return_value=root / "Profile"),
+                patch.dict("boogart.core.paths.os.environ", {"USERPROFILE": str(root / "Profile"), "APPDATA": str(root / "AppData")}, clear=True),
+                patch("boogart.core.paths.windows_known_folder", side_effect=known_folder),
+            ):
+                paths = BoogartPaths.discover()
+
+            self.assertEqual(paths.desktop, visible_desktop)
+            self.assertNotEqual(paths.desktop, fallback_desktop)
+
 
 def make_paths(root: Path) -> BoogartPaths:
     return BoogartPaths(
