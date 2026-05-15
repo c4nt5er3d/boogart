@@ -8,6 +8,7 @@ from unittest.mock import patch
 
 from boogart.app import install_boogart
 from boogart.cleanup import cleanup
+from boogart.core.debug import debug_status
 from boogart.core.paths import BoogartPaths
 from boogart.core.state import BoogartState, load_state, save_state
 from boogart.rendering.sprite import render_boogart_sprite
@@ -145,6 +146,19 @@ class GddRuntimeTests(unittest.TestCase):
             self.assertEqual(paths.desktop, visible_desktop)
             self.assertNotEqual(paths.desktop, fallback_desktop)
 
+    def test_debug_status_reports_paths_and_recent_events(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            paths = make_paths(root)
+            install_boogart("jay", paths)
+
+            status = debug_status(paths)
+
+            self.assertIn("BOOGART DEBUG STATUS", status)
+            self.assertIn(str(paths.desktop), status)
+            self.assertIn("install_render_body", status)
+            self.assertIn("boogart.png", status)
+
 
 def make_paths(root: Path) -> BoogartPaths:
     return BoogartPaths(
@@ -156,10 +170,11 @@ def make_paths(root: Path) -> BoogartPaths:
         music=root / "Music",
         videos=root / "Videos",
         data_dir=root / "Data",
-        state_file=root / "Data" / "state.json",
-        log_file=root / "Desktop" / "log.txt",
-        desktop_boogart_png=root / "Desktop" / "boogart.png",
-    )
+            state_file=root / "Data" / "state.json",
+            debug_file=root / "Data" / "debug.txt",
+            log_file=root / "Desktop" / "log.txt",
+            desktop_boogart_png=root / "Desktop" / "boogart.png",
+        )
 
 
 if __name__ == "__main__":

@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 from datetime import timedelta
 
+from boogart.core.debug import debug_log, debug_status
 from boogart.core.paths import BoogartPaths
 from boogart.core.state import BoogartState, remember_generated_file, save_state
 from boogart.runtime import HEARTBEAT_SECONDS, RuntimeConfig, body_metadata, file_hash, heartbeat, run_simulation
@@ -13,17 +14,21 @@ from boogart.ui.terminal import ConsoleSetupTerminal, SetupTerminal, TkUnavailab
 def install_boogart(username: str, paths: BoogartPaths | None = None) -> BoogartState:
     paths = paths or BoogartPaths.discover()
     paths.ensure()
+    debug_log(paths, "install_start", username=username, desktop=paths.desktop, body=paths.desktop_boogart_png, log=paths.log_file)
 
     state = BoogartState.new(username=username)
     state.current_folder = str(paths.desktop)
     render_boogart_sprite(paths.desktop_boogart_png, "kitten", metadata=body_metadata(state, "kitten"))
+    debug_log(paths, "install_render_body", path=paths.desktop_boogart_png, exists=paths.desktop_boogart_png.exists(), hash=file_hash(paths.desktop_boogart_png))
     remember_generated_file(state, paths.desktop_boogart_png)
     state.body_hash = file_hash(paths.desktop_boogart_png)
     paths.log_file.write_text(f"[{state.created_at}]: mrrp.\n", encoding="utf-8")
+    debug_log(paths, "install_write_log", path=paths.log_file, exists=paths.log_file.exists())
     remember_generated_file(state, paths.log_file)
     state.log_count_today = 1
     state.last_log_day = state.created_at[:10]
     save_state(paths.state_file, state)
+    debug_log(paths, "install_save_state", path=paths.state_file, exists=paths.state_file.exists())
     return state
 
 
@@ -34,11 +39,17 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument("--step-minutes", type=int, default=15, help="simulated minutes per tick")
     parser.add_argument("--once", action="store_true", help="run one heartbeat and exit")
     parser.add_argument("--name", default="friend", help="name to use for noninteractive setup")
+    parser.add_argument("--debug-status", action="store_true", help="print path and debug information, then exit")
     args = parser.parse_args(argv)
 
     paths = BoogartPaths.discover()
     paths.ensure()
+    debug_log(paths, "paths_discovered", desktop=paths.desktop, data_dir=paths.data_dir, log=paths.log_file, body=paths.desktop_boogart_png)
     config = RuntimeConfig(dev_fast=args.dev_fast)
+
+    if args.debug_status:
+        print(debug_status(paths))
+        return
 
     if not paths.state_file.exists():
         if args.simulate is not None or args.once or args.dev_fast:

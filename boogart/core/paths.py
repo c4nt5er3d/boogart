@@ -18,6 +18,7 @@ class BoogartPaths:
     videos: Path
     data_dir: Path
     state_file: Path
+    debug_file: Path
     log_file: Path
     desktop_boogart_png: Path
 
@@ -55,6 +56,7 @@ class BoogartPaths:
             videos=videos,
             data_dir=data_dir,
             state_file=data_dir / "state.json",
+            debug_file=data_dir / "debug.txt",
             log_file=desktop / "log.txt",
             desktop_boogart_png=desktop / "boogart.png",
         )
@@ -126,3 +128,17 @@ def windows_onedrive_folder(name: str) -> Path | None:
             if path.exists():
                 return path
     return None
+
+
+def debug_paths(paths: BoogartPaths) -> dict[str, str]:
+    return {
+        "home": str(paths.home),
+        "desktop": str(paths.desktop),
+        "documents": str(paths.documents),
+        "downloads": str(paths.downloads),
+        "data_dir": str(paths.data_dir),
+        "state_file": str(paths.state_file),
+        "debug_file": str(paths.debug_file),
+        "log_file": str(paths.log_file),
+        "desktop_boogart_png": str(paths.desktop_boogart_png),
+    }

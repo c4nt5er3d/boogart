@@ -7,6 +7,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
+from boogart.core.debug import debug_log
 from boogart.core.growth import parse_timestamp, phase_for_birth_time, stage_for_birth_time
 from boogart.core.paths import BoogartPaths
 from boogart.core.state import BoogartState, load_state, remember_generated_file, save_state
@@ -91,6 +92,18 @@ def run_heartbeat(paths: BoogartPaths, now: datetime | None = None, config: Runt
     frame.state.last_active_at = frame.now.isoformat(timespec="seconds")
     frame.state.updated_at = frame.state.last_active_at
     save_state(paths.state_file, frame.state)
+    debug_log(
+        paths,
+        "heartbeat",
+        now=frame.now.isoformat(timespec="seconds"),
+        lifecycle=frame.state.lifecycle,
+        phase=frame.state.phase,
+        hunger=frame.state.hunger,
+        folder=frame.state.current_folder,
+        body=frame.body_path,
+        body_exists=frame.body_path.exists() if frame.body_path else False,
+        events=",".join(frame.events) or "idle",
+    )
     return frame
 
 
@@ -269,12 +282,14 @@ def maybe_drop_txt(frame: HeartbeatFrame) -> None:
 
 def render_body(frame: HeartbeatFrame) -> None:
     if not frame.body_path:
+        debug_log(frame.paths, "render_body_skipped", reason="missing_body_path")
         return
     stage = stage_for_birth_time(frame.state.birth_time, frame.now, min(frame.state.affection // 3, 60)).id
     metadata = body_metadata(frame.state, stage)
     render_boogart_sprite(frame.body_path, stage, metadata=metadata)
     frame.state.body_hash = file_hash(frame.body_path)
     remember_generated_file(frame.state, frame.body_path)
+    debug_log(frame.paths, "render_body", path=frame.body_path, exists=frame.body_path.exists(), stage=stage, hash=frame.state.body_hash)
 
 
 def kill(frame: HeartbeatFrame, cause: str) -> None:
