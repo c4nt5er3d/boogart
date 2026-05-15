@@ -1,0 +1,125 @@
+from __future__ import annotations
+
+import tempfile
+import unittest
+from datetime import datetime, timedelta, timezone
+from pathlib import Path
+from unittest.mock import patch
+
+from boogart.app import install_boogart
+from boogart.cleanup import cleanup
+from boogart.core.paths import BoogartPaths
+from boogart.core.state import BoogartState, load_state, save_state
+from boogart.rendering.sprite import render_boogart_sprite
+from boogart.runtime import run_heartbeat
+
+
+class GddRuntimeTests(unittest.TestCase):
+    def test_install_creates_only_body_and_log(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            paths = make_paths(Path(tmp))
+            with patch("boogart.app.BoogartPaths.discover", return_value=paths):
+                state = install_boogart("jay")
+
+            self.assertTrue((paths.desktop / "boogart.png").exists())
+            self.assertTrue((paths.desktop / "log.txt").exists())
+            self.assertEqual(sorted(path.name for path in paths.desktop.iterdir()), ["boogart.png", "log.txt"])
+            self.assertEqual(state.phase, 1)
+            self.assertIn("mrrp", paths.log_file.read_text(encoding="utf-8"))
+
+    def test_food_is_eaten_from_roaming_scope_without_reading_contents(self) -> None:
+        now = datetime(2026, 1, 1, tzinfo=timezone.utc)
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            paths = make_paths(root)
+            paths.desktop.mkdir(parents=True)
+            paths.downloads.mkdir()
+            paths.data_dir.mkdir()
+            (paths.downloads / "anything.food").write_text("do not matter", encoding="utf-8")
+            state = BoogartState.new("jay")
+            state.current_folder = str(paths.desktop)
+            state.hunger = 80
+            state.next_move_at = (now + timedelta(hours=1)).isoformat(timespec="seconds")
+            render_boogart_sprite(paths.desktop_boogart_png, "kitten")
+            save_state(paths.state_file, state)
+
+            frame = run_heartbeat(paths, now)
+            saved = load_state(paths.state_file)
+
+            self.assertIn("ate:anything.food", frame.events)
+            self.assertFalse((paths.downloads / "anything.food").exists())
+            self.assertLess(saved.hunger, 80)
+
+    def test_log_is_capped_at_three_entries_per_day(self) -> None:
+        now = datetime(2026, 1, 1, tzinfo=timezone.utc)
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            paths = make_paths(root)
+            paths.desktop.mkdir(parents=True)
+            paths.downloads.mkdir()
+            paths.data_dir.mkdir()
+            state = BoogartState.new("jay")
+            state.current_folder = str(paths.desktop)
+            state.hunger = 99
+            state.neglect = 1
+            state.next_hunger_at = now.isoformat(timespec="seconds")
+            render_boogart_sprite(paths.desktop_boogart_png, "kitten")
+            save_state(paths.state_file, state)
+
+            for offset in range(5):
+                run_heartbeat(paths, now + timedelta(minutes=offset * 2))
+
+            lines = paths.log_file.read_text(encoding="utf-8").splitlines()
+            self.assertLessEqual(len(lines), 3)
+
+    def test_deleted_body_leaves_dead_png(self) -> None:
+        now = datetime(2026, 1, 1, tzinfo=timezone.utc)
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            paths = make_paths(root)
+            paths.desktop.mkdir(parents=True)
+            paths.data_dir.mkdir()
+            state = BoogartState.new("jay")
+            state.current_folder = str(paths.desktop)
+            state.next_move_at = (now + timedelta(hours=1)).isoformat(timespec="seconds")
+            save_state(paths.state_file, state)
+
+            frame = run_heartbeat(paths, now)
+
+            self.assertIn("dead:absence", frame.events)
+            self.assertTrue((paths.desktop / "boogart_dead.png").exists())
+            self.assertEqual(load_state(paths.state_file).lifecycle, "dead")
+
+    def test_cleanup_removes_manifest_files_and_state(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            paths = make_paths(root)
+            with patch("boogart.app.BoogartPaths.discover", return_value=paths):
+                install_boogart("jay")
+
+            removed = cleanup(paths)
+
+            self.assertIn(paths.state_file, removed)
+            self.assertFalse(paths.state_file.exists())
+            self.assertFalse(paths.desktop_boogart_png.exists())
+            self.assertFalse(paths.log_file.exists())
+
+
+def make_paths(root: Path) -> BoogartPaths:
+    return BoogartPaths(
+        home=root,
+        desktop=root / "Desktop",
+        documents=root / "Documents",
+        downloads=root / "Downloads",
+        pictures=root / "Pictures",
+        music=root / "Music",
+        videos=root / "Videos",
+        data_dir=root / "Data",
+        state_file=root / "Data" / "state.json",
+        log_file=root / "Desktop" / "log.txt",
+        desktop_boogart_png=root / "Desktop" / "boogart.png",
+    )
+
+
+if __name__ == "__main__":
+    unittest.main()

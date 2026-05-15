@@ -35,55 +35,16 @@ BASE_SPRITE = [
 ]
 
 STAGE_SPRITE_FILES: dict[str, str] = {
-    "newborn": "boogart_01_newborn.png",
-    "baby_kitten": "boogart_02_baby_kitten.png",
-    "kitten": "boogart_03_kitten.png",
-    "young_cat": "boogart_04_young_cat.png",
-    "cat": "boogart_05_cat.png",
-    "first_shift": "boogart_06_first_shift.png",
-    "changed": "boogart_07_changed.png",
-    "final": "boogart_08_final.png",
+    "kitten": "boogart_01_kitten.png",
+    "cat": "boogart_02_cat.png",
+    "shifting": "boogart_03_shifting.png",
+    "wrong": "boogart_04_wrong.png",
+    "final": "boogart_05_final.png",
 }
 
 STAGE_SPRITES: dict[str, list[str]] = {
-    "newborn": [
-        "................",
-        "................",
-        "................",
-        "................",
-        ".....IIII.......",
-        "....IFFFFI......",
-        "...IFFFFFEI.....",
-        "...IFFFFFFI.....",
-        "....IFFFFI......",
-        ".....IIII.......",
-        "................",
-        "................",
-        "................",
-        "................",
-        "................",
-        "................",
-    ],
-    "baby_kitten": [
-        "................",
-        "................",
-        "....I....I......",
-        "...IFI..IFI.....",
-        "...IFFFFFI......",
-        "..IFFFFFFFI.....",
-        "..IFFEFFEFI.....",
-        "..IFFFFFFFI.....",
-        "...IFFFFFI......",
-        "....IIIII.......",
-        ".....IF.........",
-        "....II..........",
-        "................",
-        "................",
-        "................",
-        "................",
-    ],
     "kitten": BASE_SPRITE,
-    "young_cat": [
+    "cat": [
         "................",
         "...I......I.....",
         "..IFI....IFI....",
@@ -101,7 +62,7 @@ STAGE_SPRITES: dict[str, list[str]] = {
         "................",
         "................",
     ],
-    "cat": [
+    "shifting": [
         "................",
         "...I......I.....",
         "..IFI....IFI....",
@@ -119,7 +80,7 @@ STAGE_SPRITES: dict[str, list[str]] = {
         "................",
         "................",
     ],
-    "first_shift": [
+    "wrong": [
         "................",
         "...I......I.....",
         "..IFI....IFI....",
@@ -133,24 +94,6 @@ STAGE_SPRITES: dict[str, list[str]] = {
         "....IF...FI.....",
         "....ID...DI.....",
         "...II.....II....",
-        "................",
-        "................",
-        "................",
-    ],
-    "changed": [
-        "................",
-        "...I......I.....",
-        "..IFI....IFI....",
-        ".IIFFFIIFFFFII..",
-        ".IFFFFFFFFFFFI..",
-        ".IFFDFFFFDFFFI..",
-        ".IFFFFFFFFFFFI..",
-        "..IFFFDDFFFFI...",
-        "..DIFFFFFFFID...",
-        "...DIIIIIIID....",
-        "....ID...DI.....",
-        "...DID...DID....",
-        "..DII.....IID...",
         "................",
         "................",
         "................",
@@ -191,7 +134,13 @@ def sprite_asset_path(assets_dir: Path, stage: str) -> Path:
     return assets_dir / STAGE_SPRITE_FILES[stage]
 
 
-def render_boogart_sprite(path: Path, stage: str, assets_dir: Path | None = None, scale: int = 8) -> None:
+def render_boogart_sprite(
+    path: Path,
+    stage: str,
+    assets_dir: Path | None = None,
+    scale: int = 8,
+    metadata: dict[str, str] | None = None,
+) -> None:
     if stage not in STAGE_IDS:
         raise ValueError(f"unknown sprite stage: {stage}")
 
@@ -201,10 +150,10 @@ def render_boogart_sprite(path: Path, stage: str, assets_dir: Path | None = None
             copyfile(asset_path, path)
             return
 
-    render_placeholder_boogart(path, stage=stage, scale=scale)
+    render_placeholder_boogart(path, stage=stage, scale=scale, metadata=metadata)
 
 
-def render_placeholder_boogart(path: Path, stage: str = "kitten", scale: int = 8) -> None:
+def render_placeholder_boogart(path: Path, stage: str = "kitten", scale: int = 8, metadata: dict[str, str] | None = None) -> None:
     sprite = STAGE_SPRITES.get(stage, BASE_SPRITE)
     width = len(sprite[0]) * scale
     height = len(sprite) * scale
@@ -215,4 +164,4 @@ def render_placeholder_boogart(path: Path, stage: str = "kitten", scale: int = 8
             for cell in row:
                 pixels.extend([PALETTE[cell]] * scale)
 
-    write_rgba_png(path, width, height, pixels)
+    write_rgba_png(path, width, height, pixels, text_chunks=metadata)

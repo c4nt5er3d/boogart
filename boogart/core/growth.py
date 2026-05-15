@@ -8,23 +8,20 @@ from datetime import datetime, timedelta, timezone
 class GrowthStage:
     id: str
     label: str
+    phase: int
     starts_after: timedelta
-    voice: str
 
 
 STAGES: tuple[GrowthStage, ...] = (
-    GrowthStage("newborn", "Newborn / Arrival", timedelta(hours=0), "vocalization"),
-    GrowthStage("baby_kitten", "Baby Kitten", timedelta(hours=12), "vocalization"),
-    GrowthStage("kitten", "Kitten", timedelta(days=1), "dialogue"),
-    GrowthStage("young_cat", "Young Cat", timedelta(days=2), "dialogue"),
-    GrowthStage("cat", "Cat", timedelta(days=3), "dialogue"),
-    GrowthStage("first_shift", "First Shift", timedelta(days=4), "dialogue"),
-    GrowthStage("changed", "Changed", timedelta(days=5), "dialogue"),
-    GrowthStage("final", "Final Form", timedelta(days=6), "dialogue"),
+    GrowthStage("kitten", "Kitten", 1, timedelta()),
+    GrowthStage("cat", "Cat", 2, timedelta(days=3)),
+    GrowthStage("shifting", "Shifting", 3, timedelta(days=14)),
+    GrowthStage("wrong", "Wrong", 4, timedelta(days=30)),
+    GrowthStage("final", "Final Form", 6, timedelta(days=60)),
 )
 
 STAGE_IDS = tuple(stage.id for stage in STAGES)
-VOCALIZATION_ONLY_STAGES = {"newborn", "baby_kitten"}
+VOCALIZATION_ONLY_STAGES = {"kitten"}
 
 
 def stage_for_age(age: timedelta) -> GrowthStage:
@@ -32,21 +29,28 @@ def stage_for_age(age: timedelta) -> GrowthStage:
     for stage in STAGES:
         if age >= stage.starts_after:
             current = stage
-        else:
-            break
     return current
 
 
-def stage_for_created_at(created_at: str, now: datetime | None = None) -> GrowthStage:
-    created = parse_timestamp(created_at)
+def stage_for_birth_time(birth_time: str, now: datetime | None = None, care_slowdown_days: int = 0) -> GrowthStage:
     current_time = now or datetime.now(timezone.utc)
-    if current_time.tzinfo is None:
-        current_time = current_time.replace(tzinfo=timezone.utc)
-    return stage_for_age(max(current_time - created, timedelta()))
+    age = max(current_time - parse_timestamp(birth_time) - timedelta(days=care_slowdown_days), timedelta())
+    return stage_for_age(age)
+
+
+def stage_for_created_at(created_at: str, now: datetime | None = None) -> GrowthStage:
+    return stage_for_birth_time(created_at, now)
+
+
+def phase_for_birth_time(birth_time: str, now: datetime | None = None, care_slowdown_days: int = 0) -> int:
+    return stage_for_birth_time(birth_time, now, care_slowdown_days).phase
 
 
 def parse_timestamp(value: str) -> datetime:
-    parsed = datetime.fromisoformat(value)
+    try:
+        parsed = datetime.fromisoformat(value)
+    except ValueError:
+        return datetime.now(timezone.utc)
     if parsed.tzinfo is None:
         return parsed.replace(tzinfo=timezone.utc)
     return parsed.astimezone(timezone.utc)

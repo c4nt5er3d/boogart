@@ -1,69 +1,45 @@
 # Boogart
 
-Boogart is a small desktop companion prototype.
+Boogart is a small desktop companion that lives on the file system. The game is intentionally tiny on the surface:
 
-Phase 0 includes:
+- `boogart.png` is the body.
+- `log.txt` is what he experiences.
+- `state.json` is private engine state in the app data directory.
 
-- Fake terminal setup UI with Tkinter
-- Name input
-- Windows-friendly path abstraction
-- Placeholder `boogart.png` rendering
-- `boogart_log.txt` writing
+Everything else exists to keep those files current without turning the experience into a dashboard.
 
-Run locally:
+## Current Mechanics
+
+- First launch shows the plain setup terminal from the GDD.
+- Boogart starts on the Desktop as `boogart.png`.
+- The log starts with one simple `mrrp.` line.
+- Heartbeats run quietly and only log up to three entries per day.
+- Boogart eats `.food` files found in a shallow, bounded Desktop/Downloads scan.
+- Movement uses jittered intervals and sometimes intentionally does nothing.
+- He may drop at most one `hey*.txt` file per day.
+- If `boogart.png` is deleted, `boogart_dead.png` is left behind.
+- After 48 hours dead, a missing corpse is replaced by `boogart_husk.png`.
+- Copy reactions are delayed and create `too many.txt` beside detected copies.
+- PNG files include hidden text metadata for identity, lineage, generation, birth time, stage, copy count, and death count.
+
+## Boundaries
+
+Boogart scans filenames only. He does not read file contents, modify unrelated files, open browsers, play jumpscares, or surface internal stats. The scanner is capped by depth and entry count, and common cloud-sync/system-heavy folders are avoided.
+
+## Run Locally
 
 ```bash
-python3.11 -m boogart
+python3 -m boogart
 ```
 
-Build a first Windows executable from Windows:
+Clean up generated files and private state:
 
-```powershell
-.\scripts\build_windows.ps1 -Clean
-```
-
-The executable will be written to `dist\Boogart.exe`. GitHub Actions also
-builds and uploads a `Boogart-windows` artifact on pushes to `main`.
-
-Clean up Boogart-generated files and local state:
-
-```powershell
+```bash
 boogart-cleanup --yes
 ```
 
-Dialogue lives in `read.md`. Use headings in the form:
+## Tests
 
-```md
-## trigger.tone
-- line here.
+```bash
+pytest -q
 ```
-
-For baby-stage sounds, use:
-
-```md
-## vocalizations.trigger.stage
-- mrrp.
-```
-
-Example triggers include `first_launch`, `food_found`, and `dead_boogart_found`.
-Growth stages are `newborn`, `baby_kitten`, `kitten`, `young_cat`, `cat`,
-`first_shift`, `changed`, and `final`.
-
-Architecture notes:
-
-- `boogart/world` scans shallow filenames and classifies symbolic tags without
-  reading file contents.
-- `boogart/mind` runs a tiny utility brain where actions score themselves and
-  the highest valid action runs.
-- `boogart/core/lifecycle.py` owns death, corpse rot, and delayed rebirth.
-- `boogart/runtime.py` runs the heartbeat that loads state, ticks the brain,
-  renders Boogart in its current folder, appends the log, and saves state.
-- `boogart/world/watcher.py` stores shallow snapshots of Boogart's current
-  folder only; it does not deep-map home folders or write to the clipboard.
-- `wander_scope` controls how far Boogart may look: `desktop`, `marked`
-  folders containing `.boog`, or bounded `home_rooms` such as Desktop,
-  Documents, Downloads, Pictures, Music, and Videos.
-- Tree scans are capped at depth 2, 100 files per folder, and 1000 total
-  observations.
-- Boogart-owned files are tracked in state so cleanup can remove only files the
-  game generated.

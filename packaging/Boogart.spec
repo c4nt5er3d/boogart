@@ -9,7 +9,7 @@ a = Analysis(
     ["boogart/__main__.py"],
     pathex=[str(ROOT)],
     binaries=[],
-    datas=[(str(ROOT / "read.md"), ".")],
+    datas=[],
     hiddenimports=[],
     hookspath=[],
     hooksconfig={},

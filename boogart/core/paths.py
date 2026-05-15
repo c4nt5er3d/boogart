@@ -46,7 +46,7 @@ class BoogartPaths:
             videos=videos,
             data_dir=data_dir,
             state_file=data_dir / "state.json",
-            log_file=desktop / "boogart_log.txt",
+            log_file=desktop / "log.txt",
             desktop_boogart_png=desktop / "boogart.png",
         )
 

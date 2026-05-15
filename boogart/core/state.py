@@ -7,7 +7,7 @@ from pathlib import Path
 from uuid import uuid4
 
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 
 
 def utc_now() -> str:
@@ -15,200 +15,182 @@ def utc_now() -> str:
 
 
 @dataclass
-class CorpseRecord:
-    id: str
-    incarnation_id: str
-    cause: str
-    reason: str
-    death_time: str
-    folder_path: str
-    corpse_path: str
-    rot_stage: str = "fresh"
-    seen: bool = False
-    eaten: bool = False
-
-    @classmethod
-    def from_dict(cls, data: dict[str, object]) -> "CorpseRecord":
-        return cls(
-            id=str(data.get("id") or uuid4()),
-            incarnation_id=str(data.get("incarnation_id") or ""),
-            cause=str(data.get("cause") or "unknown"),
-            reason=str(data.get("reason") or ""),
-            death_time=str(data.get("death_time") or utc_now()),
-            folder_path=str(data.get("folder_path") or ""),
-            corpse_path=str(data.get("corpse_path") or ""),
-            rot_stage=str(data.get("rot_stage") or "fresh"),
-            seen=bool(data.get("seen", False)),
-            eaten=bool(data.get("eaten", False)),
-        )
-
-
-@dataclass
-class NeedsMemory:
-    fear: int = 0
-    curiosity: int = 0
-    loneliness: int = 0
-    trust: int = 0
-
-    @classmethod
-    def from_dict(cls, data: dict[str, object]) -> "NeedsMemory":
-        return cls(
-            fear=int(data.get("fear") or 0),
-            curiosity=int(data.get("curiosity") or 0),
-            loneliness=int(data.get("loneliness") or 0),
-            trust=int(data.get("trust") or 0),
-        )
-
-
-@dataclass
-class MessageRecord:
-    text: str
-    at: str
-
-    @classmethod
-    def from_dict(cls, data: dict[str, object]) -> "MessageRecord":
-        return cls(text=str(data.get("text") or ""), at=str(data.get("at") or utc_now()))
-
-
-@dataclass
-class MessageMemory:
-    cooldowns: dict[str, object] = field(default_factory=dict)
-    recent: list[MessageRecord] = field(default_factory=list)
-
-    @classmethod
-    def from_memory_dict(cls, memory: dict[str, object]) -> "MessageMemory":
-        recent = [
-            MessageRecord.from_dict(item)
-            for item in _list(memory.get("recent_messages"))
-            if isinstance(item, dict)
-        ]
-        return cls(cooldowns=_dict(memory.get("message_cooldowns")), recent=recent)
-
-
-@dataclass
 class BoogartState:
     schema_version: int
-    run_id: str
     username: str
-    stage: str
-    lifecycle: str
-    incarnation_id: str
+    boogart_id: str
+    generation: int
+    birth_time: str
+    phase: int
+    lineage: list[str]
+    parent_id: str | None
+    death_count: int
+    copy_count: int
+    body_hash: str
+    body_name: str
     current_folder: str
-    wander_scope: str
+    lifecycle: str
     hunger: int
     neglect: int
     affection: int
-    corruption: int
     created_at: str
-    birth_at: str
     updated_at: str
-    died_at: str | None = None
-    death_cause: str | None = None
-    rebirth_available_at: str | None = None
-    corpse_records: list[dict[str, object]] = field(default_factory=list)
+    last_active_at: str
+    next_move_at: str
+    next_hunger_at: str
+    next_txt_at: str
+    last_log_day: str
+    log_count_today: int
+    txt_count_today: int
+    addressed_username: bool
     generated_files: list[str] = field(default_factory=list)
-    global_memory: dict[str, object] = field(default_factory=dict)
+    manifest: list[str] = field(default_factory=list)
+    favorites: dict[str, int] = field(default_factory=dict)
     memory: dict[str, object] = field(default_factory=dict)
 
     @classmethod
     def new(cls, username: str) -> "BoogartState":
         now = utc_now()
+        boogart_id = str(uuid4())
         return cls(
             schema_version=SCHEMA_VERSION,
-            run_id=str(uuid4()),
             username=username.strip() or "friend",
-            stage="newborn",
-            lifecycle="alive",
-            incarnation_id=str(uuid4()),
+            boogart_id=boogart_id,
+            generation=1,
+            birth_time=now,
+            phase=1,
+            lineage=[boogart_id],
+            parent_id=None,
+            death_count=0,
+            copy_count=0,
+            body_hash="",
+            body_name="boogart.png",
             current_folder="",
-            wander_scope="desktop",
-            hunger=20,
+            lifecycle="alive",
+            hunger=18,
             neglect=0,
             affection=0,
-            corruption=0,
             created_at=now,
-            birth_at=now,
             updated_at=now,
+            last_active_at=now,
+            next_move_at=now,
+            next_hunger_at=now,
+            next_txt_at=now,
+            last_log_day="",
+            log_count_today=0,
+            txt_count_today=0,
+            addressed_username=False,
         )
 
 
 def save_state(path: Path, state: BoogartState) -> None:
-    path.write_text(json.dumps(asdict(state), indent=2), encoding="utf-8")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    payload = json.dumps(asdict(state), indent=2, sort_keys=True)
+    tmp = path.with_suffix(path.suffix + ".tmp")
+    tmp.write_text(payload, encoding="utf-8")
+    tmp.replace(path)
 
 
 def load_state(path: Path) -> BoogartState:
-    data = json.loads(path.read_text(encoding="utf-8"))
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        data = {}
     return state_from_dict(data)
 
 
 def state_from_dict(data: dict[str, object]) -> BoogartState:
-    data = migrate_state_dict(data)
-    now = utc_now()
-    run_id = str(data.get("run_id") or uuid4())
-    username = str(data.get("username") or "friend")
-    birth_at = str(data.get("birth_at") or data.get("created_at") or now)
+    migrated = migrate_state_dict(data)
+    state = BoogartState.new(str(migrated.get("username") or "friend"))
 
-    return BoogartState(
-        schema_version=int(data.get("schema_version") or SCHEMA_VERSION),
-        run_id=run_id,
-        username=username,
-        stage=str(data.get("stage") or "newborn"),
-        lifecycle=str(data.get("lifecycle") or "alive"),
-        incarnation_id=str(data.get("incarnation_id") or uuid4()),
-        current_folder=str(data.get("current_folder") or ""),
-        wander_scope=str(data.get("wander_scope") or "desktop"),
-        hunger=int(data.get("hunger") or 0),
-        neglect=int(data.get("neglect") or 0),
-        affection=int(data.get("affection") or 0),
-        corruption=int(data.get("corruption") or 0),
-        created_at=str(data.get("created_at") or now),
-        birth_at=birth_at,
-        updated_at=str(data.get("updated_at") or now),
-        died_at=_optional_str(data.get("died_at")),
-        death_cause=_optional_str(data.get("death_cause")),
-        rebirth_available_at=_optional_str(data.get("rebirth_available_at")),
-        corpse_records=[asdict(CorpseRecord.from_dict(item)) for item in _list_of_dicts(data.get("corpse_records"))],
-        generated_files=[str(item) for item in _list(data.get("generated_files"))],
-        global_memory=_dict(data.get("global_memory")),
-        memory=_dict(data.get("memory")),
-    )
+    for field_name in state.__dataclass_fields__:
+        if field_name in migrated:
+            setattr(state, field_name, migrated[field_name])
+
+    state.schema_version = SCHEMA_VERSION
+    state.phase = max(1, min(6, int(state.phase or 1)))
+    state.generation = max(1, int(state.generation or 1))
+    state.death_count = max(0, int(state.death_count or 0))
+    state.copy_count = max(0, int(state.copy_count or 0))
+    state.hunger = max(0, min(100, int(state.hunger or 0)))
+    state.neglect = max(0, int(state.neglect or 0))
+    state.affection = max(0, int(state.affection or 0))
+    state.log_count_today = max(0, int(state.log_count_today or 0))
+    state.txt_count_today = max(0, int(state.txt_count_today or 0))
+    state.lineage = [str(item) for item in _list(state.lineage)] or [state.boogart_id]
+    state.generated_files = [str(item) for item in _list(state.generated_files)]
+    state.manifest = [str(item) for item in _list(state.manifest)]
+    state.favorites = {str(key): int(value) for key, value in _dict(state.favorites).items() if isinstance(value, int)}
+    state.memory = _dict(state.memory)
+    return state
 
 
 def migrate_state_dict(data: dict[str, object]) -> dict[str, object]:
+    now = utc_now()
     migrated = dict(data)
-    if "schema_version" not in migrated:
-        migrated["schema_version"] = 1
-    if "birth_at" not in migrated:
-        migrated["birth_at"] = migrated.get("created_at") or utc_now()
-    if "wander_scope" not in migrated:
-        migrated["wander_scope"] = "desktop"
     migrated["schema_version"] = SCHEMA_VERSION
+    if "boogart_id" not in migrated:
+        migrated["boogart_id"] = str(migrated.get("incarnation_id") or migrated.get("run_id") or uuid4())
+    if "birth_time" not in migrated:
+        migrated["birth_time"] = str(migrated.get("birth_at") or migrated.get("created_at") or now)
+    if "phase" not in migrated:
+        migrated["phase"] = _phase_from_legacy_stage(str(migrated.get("stage") or ""))
+    if "generation" not in migrated:
+        migrated["generation"] = 1
+    if "lineage" not in migrated:
+        migrated["lineage"] = [str(migrated["boogart_id"])]
+    if "death_count" not in migrated:
+        migrated["death_count"] = int(_dict(migrated.get("global_memory")).get("death_count") or 0)
+    if "body_name" not in migrated:
+        migrated["body_name"] = "boogart.png"
+    if "lifecycle" not in migrated:
+        migrated["lifecycle"] = "alive"
+    if "current_folder" not in migrated:
+        migrated["current_folder"] = ""
+    if "last_active_at" not in migrated:
+        migrated["last_active_at"] = str(migrated.get("updated_at") or now)
+    for key in ("created_at", "updated_at", "next_move_at", "next_hunger_at", "next_txt_at"):
+        migrated.setdefault(key, now)
+    migrated.setdefault("last_log_day", "")
+    migrated.setdefault("log_count_today", 0)
+    migrated.setdefault("txt_count_today", 0)
+    migrated.setdefault("copy_count", 0)
+    migrated.setdefault("body_hash", "")
+    migrated.setdefault("manifest", migrated.get("generated_files") or [])
+    migrated.setdefault("favorites", {})
+    migrated.setdefault("memory", {})
+    migrated.setdefault("addressed_username", False)
     return migrated
 
 
-def corpse_records(state: BoogartState) -> list[CorpseRecord]:
-    return [CorpseRecord.from_dict(item) for item in state.corpse_records]
+def remember_generated_file(state: BoogartState, path: Path) -> None:
+    value = str(path)
+    if value not in state.generated_files:
+        state.generated_files.append(value)
+    if value not in state.manifest:
+        state.manifest.append(value)
 
 
-def set_corpse_records(state: BoogartState, records: list[CorpseRecord]) -> None:
-    state.corpse_records = [asdict(record) for record in records]
+def corpse_records(state: BoogartState) -> list[object]:
+    return []
 
 
-def message_memory(state: BoogartState) -> MessageMemory:
-    return MessageMemory.from_memory_dict(state.memory)
+def set_corpse_records(state: BoogartState, records: list[object]) -> None:
+    state.memory["legacy_corpse_records"] = []
 
 
-def needs_memory(state: BoogartState) -> NeedsMemory:
-    raw = state.memory.get("needs")
-    if not isinstance(raw, dict):
-        return NeedsMemory()
-    return NeedsMemory.from_dict(raw)
-
-
-def _optional_str(value: object) -> str | None:
-    if value is None:
-        return None
-    return str(value)
+def _phase_from_legacy_stage(stage: str) -> int:
+    stages = {
+        "newborn": 1,
+        "baby_kitten": 1,
+        "kitten": 1,
+        "young_cat": 2,
+        "cat": 2,
+        "first_shift": 3,
+        "changed": 4,
+        "final": 6,
+    }
+    return stages.get(stage, 1)
 
 
 def _list(value: object) -> list[object]:
@@ -217,7 +199,3 @@ def _list(value: object) -> list[object]:
 
 def _dict(value: object) -> dict[str, object]:
     return value if isinstance(value, dict) else {}
-
-
-def _list_of_dicts(value: object) -> list[dict[str, object]]:
-    return [item for item in _list(value) if isinstance(item, dict)]
