@@ -32,6 +32,23 @@ Boogart scans filenames only. He does not read file contents, modify unrelated f
 python3 -m boogart
 ```
 
+## Public Download
+
+For public Windows downloads, use the latest GitHub Release:
+
+1. Open the repository on GitHub.
+2. Click **Releases**.
+3. Open the latest version.
+4. Download `Boogart-windows.zip` or `Boogart.exe`.
+5. Unzip if needed, then run `Boogart.exe`.
+
+Maintainers can publish a public download by pushing a version tag:
+
+```bash
+git tag v0.1.0
+git push origin v0.1.0
+```
+
 Run one heartbeat without opening the setup terminal:
 
 ```bash
