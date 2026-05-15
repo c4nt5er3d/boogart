@@ -2,11 +2,11 @@
 
 from pathlib import Path
 
-ROOT = Path.cwd()
+ROOT = Path(__file__).resolve().parents[1]
 
 
 a = Analysis(
-    ["boogart/__main__.py"],
+    [str(ROOT / "boogart" / "__main__.py")],
     pathex=[str(ROOT)],
     binaries=[],
     datas=[],
