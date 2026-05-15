@@ -108,7 +108,7 @@ def state_from_dict(data: dict[str, object]) -> BoogartState:
             setattr(state, field_name, migrated[field_name])
 
     state.schema_version = SCHEMA_VERSION
-    state.phase = max(1, min(6, int(state.phase or 1)))
+    state.phase = max(1, min(6, _phase_value(state.phase)))
     state.generation = max(1, int(state.generation or 1))
     state.death_count = max(0, int(state.death_count or 0))
     state.copy_count = max(0, int(state.copy_count or 0))
@@ -191,6 +191,13 @@ def _phase_from_legacy_stage(stage: str) -> int:
         "final": 6,
     }
     return stages.get(stage, 1)
+
+
+def _phase_value(value: object) -> int:
+    try:
+        return int(value or 1)
+    except (TypeError, ValueError):
+        return _phase_from_legacy_stage(str(value or ""))
 
 
 def _list(value: object) -> list[object]:

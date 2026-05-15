@@ -10,7 +10,7 @@ from boogart.app import install_boogart
 from boogart.cleanup import cleanup
 from boogart.core.debug import debug_status
 from boogart.core.paths import BoogartPaths
-from boogart.core.state import BoogartState, load_state, save_state
+from boogart.core.state import BoogartState, load_state, save_state, state_from_dict
 from boogart.rendering.sprite import render_boogart_sprite
 from boogart.runtime import HeartbeatFrame, RuntimeConfig, movement_candidates, run_heartbeat, run_simulation
 
@@ -105,6 +105,41 @@ class GddRuntimeTests(unittest.TestCase):
             self.assertFalse(paths.desktop_boogart_png.exists())
             self.assertFalse(paths.log_file.exists())
 
+    def test_cleanup_removes_orphan_desktop_files_without_state(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            paths = make_paths(root)
+            paths.desktop.mkdir(parents=True)
+            paths.data_dir.mkdir()
+            paths.desktop_boogart_png.write_text("orphan body", encoding="utf-8")
+            paths.log_file.write_text("orphan log", encoding="utf-8")
+            paths.debug_file.write_text("debug", encoding="utf-8")
+
+            cleanup(paths)
+
+            self.assertFalse(paths.desktop_boogart_png.exists())
+            self.assertFalse(paths.log_file.exists())
+            self.assertFalse(paths.debug_file.exists())
+
+    def test_cleanup_removes_current_folder_body_even_if_manifest_missed_it(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            paths = make_paths(root)
+            nested = paths.desktop / "New Folder" / "runtime"
+            nested.mkdir(parents=True)
+            paths.data_dir.mkdir()
+            body = nested / "boogart.png"
+            body.write_text("body", encoding="utf-8")
+            state = BoogartState.new("jay")
+            state.current_folder = str(nested)
+            state.generated_files = []
+            save_state(paths.state_file, state)
+
+            cleanup(paths)
+
+            self.assertFalse(body.exists())
+            self.assertFalse(paths.state_file.exists())
+
     def test_dev_fast_simulation_advances_without_waiting_real_days(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -185,6 +220,11 @@ class GddRuntimeTests(unittest.TestCase):
 
             self.assertEqual(paths.desktop, visible_desktop)
             self.assertNotEqual(paths.desktop, fallback_desktop)
+
+    def test_state_loader_accepts_legacy_string_phase(self) -> None:
+        state = state_from_dict({"username": "jay", "phase": "kitten"})
+
+        self.assertEqual(state.phase, 1)
 
     def test_debug_status_reports_paths_and_recent_events(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
