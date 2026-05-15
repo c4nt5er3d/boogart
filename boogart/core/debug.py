@@ -4,6 +4,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from boogart.core.paths import BoogartPaths, debug_paths
+from boogart.core.state import load_state
 
 
 def debug_log(paths: BoogartPaths, event: str, **fields: object) -> None:
@@ -35,6 +36,14 @@ def debug_status(paths: BoogartPaths) -> str:
         path = Path(value)
         exists = path.exists()
         lines.append(f"{key}: {value} exists={exists}")
+    if paths.state_file.exists():
+        state = load_state(paths.state_file)
+        current_folder = Path(state.current_folder or paths.desktop)
+        current_body = current_folder / state.body_name
+        lines.append(f"current_folder: {current_folder} exists={current_folder.exists()}")
+        lines.append(f"current_body_path: {current_body} exists={current_body.exists()}")
+        lines.append(f"current_body_exists: {current_body.exists()}")
+        lines.append(f"desktop_body_exists: {paths.desktop_boogart_png.exists()}")
     if paths.debug_file.exists():
         lines.append("")
         lines.append("recent debug:")

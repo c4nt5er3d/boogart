@@ -12,7 +12,7 @@ from boogart.core.debug import debug_status
 from boogart.core.paths import BoogartPaths
 from boogart.core.state import BoogartState, load_state, save_state
 from boogart.rendering.sprite import render_boogart_sprite
-from boogart.runtime import RuntimeConfig, run_heartbeat, run_simulation
+from boogart.runtime import HeartbeatFrame, RuntimeConfig, movement_candidates, run_heartbeat, run_simulation
 
 
 class GddRuntimeTests(unittest.TestCase):
@@ -123,7 +123,47 @@ class GddRuntimeTests(unittest.TestCase):
 
             self.assertEqual(result.ticks, 8)
             self.assertGreaterEqual(saved.phase, 2)
-            self.assertIn("boogart.png", result.files)
+            self.assertTrue((Path(saved.current_folder) / saved.body_name).exists())
+
+    def test_first_heartbeat_keeps_boogart_visible_on_desktop(self) -> None:
+        now = datetime(2026, 1, 1, tzinfo=timezone.utc)
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            paths = make_paths(root)
+            install_boogart("jay", paths)
+            nested = paths.desktop / "New Folder" / "runtime" / "java-runtime-delta"
+            nested.mkdir(parents=True)
+            state = load_state(paths.state_file)
+            state.birth_time = now.isoformat(timespec="seconds")
+            state.next_move_at = now.isoformat(timespec="seconds")
+            save_state(paths.state_file, state)
+
+            frame = run_heartbeat(paths, now)
+            saved = load_state(paths.state_file)
+
+            self.assertNotIn("moved:java-runtime-delta", frame.events)
+            self.assertEqual(Path(saved.current_folder), paths.desktop)
+            self.assertTrue(paths.desktop_boogart_png.exists())
+
+    def test_first_day_candidates_exclude_deep_runtime_but_later_allow_it(self) -> None:
+        now = datetime(2026, 1, 1, tzinfo=timezone.utc)
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            paths = make_paths(root)
+            paths.desktop.mkdir(parents=True)
+            paths.downloads.mkdir()
+            paths.data_dir.mkdir()
+            nested = paths.desktop / "New Folder" / "runtime" / "java-runtime-delta"
+            nested.mkdir(parents=True)
+            state = BoogartState.new("jay")
+            state.current_folder = str(paths.desktop)
+            state.birth_time = now.isoformat(timespec="seconds")
+
+            early_frame = HeartbeatFrame(paths=paths, now=now + timedelta(hours=1), state=state)
+            later_frame = HeartbeatFrame(paths=paths, now=now + timedelta(hours=25), state=state)
+
+            self.assertNotIn(nested, movement_candidates(early_frame))
+            self.assertIn(nested, movement_candidates(later_frame))
 
     def test_windows_discovery_prefers_known_desktop_over_userprofile_fallback(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -158,6 +198,8 @@ class GddRuntimeTests(unittest.TestCase):
             self.assertIn(str(paths.desktop), status)
             self.assertIn("install_render_body", status)
             self.assertIn("boogart.png", status)
+            self.assertIn("current_body_path", status)
+            self.assertIn("current_body_exists: True", status)
 
 
 def make_paths(root: Path) -> BoogartPaths:
@@ -170,11 +212,11 @@ def make_paths(root: Path) -> BoogartPaths:
         music=root / "Music",
         videos=root / "Videos",
         data_dir=root / "Data",
-            state_file=root / "Data" / "state.json",
-            debug_file=root / "Data" / "debug.txt",
-            log_file=root / "Desktop" / "log.txt",
-            desktop_boogart_png=root / "Desktop" / "boogart.png",
-        )
+        state_file=root / "Data" / "state.json",
+        debug_file=root / "Data" / "debug.txt",
+        log_file=root / "Desktop" / "log.txt",
+        desktop_boogart_png=root / "Desktop" / "boogart.png",
+    )
 
 
 if __name__ == "__main__":

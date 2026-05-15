@@ -15,10 +15,26 @@ from boogart.rendering.sprite import render_boogart_sprite
 
 
 HEARTBEAT_SECONDS = 45
+FIRST_MOVE_GRACE = timedelta(minutes=10)
+FIRST_DAY_VISIBILITY = timedelta(hours=24)
+DEV_FAST_FIRST_MOVE_GRACE = timedelta(minutes=1)
+DEV_FAST_FIRST_DAY_VISIBILITY = timedelta(minutes=30)
 MAX_LOGS_PER_DAY = 3
 MAX_TXT_PER_DAY = 1
 MAX_SCAN_ENTRIES = 160
 MAX_SCAN_DEPTH = 2
+STRANGE_FOLDER_WORDS = {
+    "build",
+    "cache",
+    "delta",
+    "dist",
+    "node_modules",
+    "runtime",
+    "target",
+    "temp",
+    "tmp",
+    "venv",
+}
 SENSITIVE_NAME_WORDS = {
     "abuse",
     "bank",
@@ -230,6 +246,9 @@ def tick_hunger(frame: HeartbeatFrame) -> None:
 def maybe_move(frame: HeartbeatFrame) -> None:
     if frame.now < parse_timestamp(frame.state.next_move_at):
         return
+    if boogart_age(frame) < first_move_grace(frame):
+        schedule_next_move(frame)
+        return
     if random_for(frame.state, frame.now.isoformat(timespec="minutes")).random() < 0.23:
         schedule_next_move(frame)
         return
@@ -238,7 +257,7 @@ def maybe_move(frame: HeartbeatFrame) -> None:
         note(frame, "too quiet here.")
         schedule_next_move(frame)
         return
-    destination = random_for(frame.state, "move").choice(choices)
+    destination = choose_movement_destination(frame, choices)
     old_body = frame.body_path
     if old_body and old_body.exists() and old_body.name == "boogart.png":
         try:
@@ -382,10 +401,91 @@ def maybe_react_to_copies(frame: HeartbeatFrame) -> None:
 
 
 def movement_candidates(frame: HeartbeatFrame) -> list[Path]:
-    candidates: list[Path] = []
+    candidates: list[Path] = [root for root in roaming_roots(frame.paths) if root.exists()]
     for root in roaming_roots(frame.paths):
         candidates.extend(path for path in iter_dirs(root) if is_roamable(path))
+    if in_first_day_visibility(frame):
+        candidates = [path for path in candidates if movement_depth(frame, path) <= 1]
     return candidates or [frame.paths.desktop]
+
+
+def choose_movement_destination(frame: HeartbeatFrame, candidates: list[Path]) -> Path:
+    rng = random_for(frame.state, f"move:{frame.now.isoformat(timespec='minutes')}")
+    weighted: list[tuple[Path, int]] = []
+    for candidate in candidates:
+        weight = movement_weight(frame, candidate)
+        if weight > 0:
+            weighted.append((candidate, weight))
+    if not weighted:
+        return frame.paths.desktop
+    total = sum(weight for _, weight in weighted)
+    pick = rng.randint(1, total)
+    running = 0
+    for candidate, weight in weighted:
+        running += weight
+        if running >= pick:
+            return candidate
+    return weighted[-1][0]
+
+
+def movement_weight(frame: HeartbeatFrame, path: Path) -> int:
+    depth = movement_depth(frame, path)
+    favorite = frame.state.favorites.get(str(path), 0)
+    weight = 20
+    if path == frame.paths.desktop:
+        weight += 35
+    if path == frame.paths.downloads:
+        weight += 15
+    if depth == 0:
+        weight += 20
+    elif depth == 1:
+        weight += 10
+    else:
+        weight -= depth * 4
+
+    if frame.state.phase >= 2:
+        weight += min(30, favorite * 8)
+        weight += min(20, len(safe_entries(path)) // 5)
+    if frame.state.phase >= 3:
+        weight += min(15, depth * 3)
+    if is_strange_folder(path):
+        if frame.state.phase <= 1:
+            weight -= 18
+        elif frame.state.phase == 2:
+            weight -= 8
+        elif frame.state.phase >= 4:
+            weight += 10
+    if in_first_day_visibility(frame) and depth > 1:
+        return 0
+    return max(1, weight)
+
+
+def movement_depth(frame: HeartbeatFrame, path: Path) -> int:
+    best: int | None = None
+    for root in roaming_roots(frame.paths):
+        try:
+            relative = path.resolve().relative_to(root.resolve())
+        except (OSError, ValueError):
+            continue
+        depth = 0 if str(relative) == "." else len(relative.parts)
+        best = depth if best is None else min(best, depth)
+    return best if best is not None else 99
+
+
+def boogart_age(frame: HeartbeatFrame) -> timedelta:
+    return max(frame.now - parse_timestamp(frame.state.birth_time), timedelta())
+
+
+def first_move_grace(frame: HeartbeatFrame) -> timedelta:
+    return DEV_FAST_FIRST_MOVE_GRACE if frame.config.dev_fast else FIRST_MOVE_GRACE
+
+
+def first_day_visibility(frame: HeartbeatFrame) -> timedelta:
+    return DEV_FAST_FIRST_DAY_VISIBILITY if frame.config.dev_fast else FIRST_DAY_VISIBILITY
+
+
+def in_first_day_visibility(frame: HeartbeatFrame) -> bool:
+    return boogart_age(frame) < first_day_visibility(frame)
 
 
 def iter_food(roots: tuple[Path, ...]):
@@ -433,7 +533,12 @@ def is_roamable(path: Path) -> bool:
     lowered = path.name.lower()
     if lowered.startswith("."):
         return False
-    return not any(word in lowered for word in ("onedrive", "dropbox", "icloud", "$recycle", "node_modules", "__pycache__"))
+    return not any(word in lowered for word in ("onedrive", "dropbox", "icloud", "$recycle", "__pycache__"))
+
+
+def is_strange_folder(path: Path) -> bool:
+    lowered = path.name.lower()
+    return any(word in lowered for word in STRANGE_FOLDER_WORDS)
 
 
 def find_body_copies(frame: HeartbeatFrame) -> list[Path]:
