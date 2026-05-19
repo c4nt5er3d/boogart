@@ -21,7 +21,11 @@ The Steam promise is: a tiny desktop pet that wanders, eats offerings, leaves tr
 - Old corpses can be eaten for a larger hunger reduction, but the most recent body is protected from immediate corpse eating.
 - Deleting the live body kills as `dead:deleted`; starvation kills as `dead:starvation`.
 - Trash/Recycle Bin recovery treats a moved body as recoverable and alive.
+- If the body disappears beside `boogart.zip`, `boogart.rar`, `boogart.7z`, `boogart.tar`, `boogart.tar.gz`, or `boogart.tgz`, Boogart enters `archived` instead of dying immediately.
+- Extracting a matching `boogart.png` during the archive grace period recovers him alive.
 - Copy reactions are delayed, nondestructive, and based on body metadata.
+- Symlinks are ignored so Boogart never follows or rewrites linked targets.
+- Backward clock jumps do not rewind or inflate active-time hunger/starvation accounting.
 - Generated file churn is capped so long-running players do not get hundreds of artifacts.
 - Cleanup removes generated files, private state, lock files, debug logs, and the hidden tether.
 

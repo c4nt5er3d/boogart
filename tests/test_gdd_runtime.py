@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import tempfile
 import unittest
+import os
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from unittest.mock import patch
@@ -477,19 +478,20 @@ class GddRuntimeTests(unittest.TestCase):
 
             self.assertFalse(any(event.startswith("txt:") for event in frame.events))
 
-    def test_metadata_missing_current_body_can_be_recovered_by_hash(self) -> None:
+    def test_metadata_missing_trashed_body_can_be_recovered_by_hash(self) -> None:
         now = datetime(2026, 1, 1, tzinfo=timezone.utc)
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             paths = make_paths(root)
             paths.desktop.mkdir(parents=True)
             paths.data_dir.mkdir()
+            trash = root / ".Trash"
+            trash.mkdir()
             state = BoogartState.new("jay")
             state.current_folder = str(paths.desktop)
             state.body_name = "boogart.png"
             state.next_move_at = (now + timedelta(hours=1)).isoformat(timespec="seconds")
-            legacy_body = paths.downloads / "boogart.png"
-            paths.downloads.mkdir()
+            legacy_body = trash / "boogart.png"
             legacy_body.write_text("legacy body", encoding="utf-8")
             state.body_hash = __import__("hashlib").sha256(b"legacy body").hexdigest()
             save_state(paths.state_file, state)
@@ -498,7 +500,31 @@ class GddRuntimeTests(unittest.TestCase):
             saved = load_state(paths.state_file)
 
             self.assertEqual(frame.body_path, legacy_body)
-            self.assertEqual(Path(saved.current_folder), paths.downloads)
+            self.assertEqual(Path(saved.current_folder), trash)
+
+    def test_metadata_missing_body_hash_is_not_used_in_ordinary_folder(self) -> None:
+        now = datetime(2026, 1, 1, tzinfo=timezone.utc)
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            paths = make_paths(root)
+            paths.desktop.mkdir(parents=True)
+            paths.downloads.mkdir()
+            paths.data_dir.mkdir()
+            state = BoogartState.new("jay")
+            state.current_folder = str(paths.desktop)
+            state.body_name = "boogart.png"
+            state.next_move_at = (now + timedelta(hours=1)).isoformat(timespec="seconds")
+            loose_copy = paths.downloads / "boogart.png"
+            loose_copy.write_text("legacy body", encoding="utf-8")
+            state.body_hash = __import__("hashlib").sha256(b"legacy body").hexdigest()
+            save_state(paths.state_file, state)
+
+            frame = run_heartbeat(paths, now)
+            saved = load_state(paths.state_file)
+
+            self.assertNotEqual(frame.body_path, loose_copy)
+            self.assertEqual(saved.lifecycle, "dead")
+            self.assertIn("dead:deleted", frame.events)
 
     def test_metadata_mismatched_body_kills_without_rendering_live_body(self) -> None:
         now = datetime(2026, 1, 1, tzinfo=timezone.utc)
@@ -518,6 +544,128 @@ class GddRuntimeTests(unittest.TestCase):
             self.assertIn("dead:absence", frame.events)
             self.assertFalse(paths.desktop_boogart_png.exists())
             self.assertTrue((paths.desktop / "boogart_dead.png").exists())
+
+    @unittest.skipIf(os.name == "nt", "symlink creation requires extra Windows privileges")
+    def test_live_body_symlink_is_ignored_without_following_target(self) -> None:
+        now = datetime(2026, 1, 1, tzinfo=timezone.utc)
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            paths = make_paths(root)
+            paths.desktop.mkdir(parents=True)
+            paths.data_dir.mkdir()
+            target = root / "target.png"
+            target.write_text("do not rewrite target", encoding="utf-8")
+            os.symlink(target, paths.desktop_boogart_png)
+            state = BoogartState.new("jay")
+            state.current_folder = str(paths.desktop)
+            state.next_move_at = (now + timedelta(hours=1)).isoformat(timespec="seconds")
+            save_state(paths.state_file, state)
+
+            frame = run_heartbeat(paths, now)
+            saved = load_state(paths.state_file)
+
+            self.assertEqual(saved.lifecycle, "dead")
+            self.assertIn("dead:absence", frame.events)
+            self.assertEqual(target.read_text(encoding="utf-8"), "do not rewrite target")
+
+    def test_read_only_render_failure_is_debugged_without_crashing(self) -> None:
+        now = datetime(2026, 1, 1, tzinfo=timezone.utc)
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            paths = make_paths(root)
+            paths.desktop.mkdir(parents=True)
+            paths.data_dir.mkdir()
+            state = BoogartState.new("jay")
+            state.current_folder = str(paths.desktop)
+            state.next_move_at = (now + timedelta(hours=1)).isoformat(timespec="seconds")
+            state.next_hunger_at = (now + timedelta(hours=1)).isoformat(timespec="seconds")
+            render_boogart_sprite(paths.desktop_boogart_png, "kitten", metadata=body_metadata(state, "kitten"))
+            save_state(paths.state_file, state)
+
+            with patch("boogart.runtime.render_boogart_sprite", side_effect=PermissionError("locked")):
+                frame = run_heartbeat(paths, now)
+            saved = load_state(paths.state_file)
+
+            self.assertEqual(saved.lifecycle, "alive")
+            self.assertTrue(any(event.startswith("state:") for event in frame.events))
+            self.assertIn("render_body_failed", paths.debug_file.read_text(encoding="utf-8"))
+
+    def test_clock_jump_backwards_does_not_advance_or_rewind_active_time(self) -> None:
+        now = datetime(2026, 1, 1, tzinfo=timezone.utc)
+        future = now + timedelta(days=2)
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            paths = make_paths(root)
+            paths.desktop.mkdir(parents=True)
+            paths.data_dir.mkdir()
+            state = BoogartState.new("jay")
+            state.current_folder = str(paths.desktop)
+            state.last_active_at = future.isoformat(timespec="seconds")
+            state.next_move_at = (future + timedelta(hours=1)).isoformat(timespec="seconds")
+            state.next_hunger_at = (future + timedelta(hours=1)).isoformat(timespec="seconds")
+            state.memory["active_minutes_total"] = 10
+            render_boogart_sprite(paths.desktop_boogart_png, "kitten", metadata=body_metadata(state, "kitten"))
+            save_state(paths.state_file, state)
+
+            run_heartbeat(paths, now)
+            saved = load_state(paths.state_file)
+
+            self.assertEqual(saved.memory["active_minutes_total"], 10)
+            self.assertEqual(saved.last_active_at, future.isoformat(timespec="seconds"))
+            self.assertIn("clock_jump_detected_at", saved.memory)
+
+    def test_archive_missing_body_enters_archived_then_recovers_on_extract(self) -> None:
+        now = datetime(2026, 1, 1, tzinfo=timezone.utc)
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            paths = make_paths(root)
+            install_boogart("jay", paths)
+            state = load_state(paths.state_file)
+            state.next_move_at = (now + timedelta(hours=1)).isoformat(timespec="seconds")
+            save_state(paths.state_file, state)
+            paths.desktop_boogart_png.unlink()
+            (paths.desktop / "boogart.zip").write_bytes(b"not opened by boogart")
+
+            archived = run_heartbeat(paths, now, RuntimeConfig(dev_fast=True))
+            archived_state = load_state(paths.state_file)
+            panel = render_live_panel(paths, archived_state, archived.events, now)
+
+            self.assertEqual(archived_state.lifecycle, "archived")
+            self.assertIn("archived:boogart.zip", archived.events)
+            self.assertNotIn("dead:deleted", archived.events)
+            self.assertIn("age: folded", panel)
+            self.assertIn("mood: muffled", panel)
+
+            render_boogart_sprite(paths.desktop_boogart_png, "kitten", metadata=body_metadata(archived_state, "kitten"))
+            recovered = run_heartbeat(paths, now + timedelta(minutes=1), RuntimeConfig(dev_fast=True))
+            recovered_state = load_state(paths.state_file)
+
+            self.assertEqual(recovered_state.lifecycle, "alive")
+            self.assertIn("unarchived", recovered.events)
+            self.assertEqual(recovered_state.body_name, "boogart.png")
+
+    def test_archive_grace_delays_deleted_death_then_expires(self) -> None:
+        now = datetime(2026, 1, 1, tzinfo=timezone.utc)
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            paths = make_paths(root)
+            install_boogart("jay", paths)
+            state = load_state(paths.state_file)
+            state.next_move_at = (now + timedelta(hours=1)).isoformat(timespec="seconds")
+            save_state(paths.state_file, state)
+            paths.desktop_boogart_png.unlink()
+            (paths.desktop / "boogart.tar.gz").write_bytes(b"folded")
+
+            run_heartbeat(paths, now, RuntimeConfig(dev_fast=True))
+            before = run_heartbeat(paths, now + timedelta(minutes=9), RuntimeConfig(dev_fast=True))
+            before_state = load_state(paths.state_file)
+            expired = run_heartbeat(paths, now + timedelta(minutes=11), RuntimeConfig(dev_fast=True))
+            expired_state = load_state(paths.state_file)
+
+            self.assertEqual(before_state.lifecycle, "archived")
+            self.assertNotIn("dead:deleted", before.events)
+            self.assertEqual(expired_state.lifecycle, "dead")
+            self.assertIn("dead:deleted", expired.events)
 
     def test_residue_metadata_does_not_count_as_body_copy(self) -> None:
         now = datetime(2026, 1, 1, tzinfo=timezone.utc)
@@ -688,6 +836,66 @@ class GddRuntimeTests(unittest.TestCase):
             self.assertEqual(live_after_final["stage"], "kitten")
             self.assertEqual(live_after_final["visual_state"], "kitten_bloody3")
             self.assertEqual(live_after_final["blood_level"], "3")
+
+    def test_partial_corpse_bite_state_survives_restart_from_metadata(self) -> None:
+        now = datetime(2026, 1, 1, tzinfo=timezone.utc)
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            paths = make_paths(root)
+            paths.desktop.mkdir(parents=True)
+            paths.data_dir.mkdir()
+            state = BoogartState.new("jay")
+            state.current_folder = str(paths.desktop)
+            state.generation = 3
+            state.hunger = 100
+            state.next_hunger_at = (now + timedelta(hours=1)).isoformat(timespec="seconds")
+            state.next_move_at = (now + timedelta(hours=1)).isoformat(timespec="seconds")
+            old_state = BoogartState.new("jay")
+            old_state.boogart_id = state.boogart_id
+            old_state.generation = 1
+            corpse = paths.desktop / "boogart_dead.png"
+            render_boogart_sprite(paths.desktop_boogart_png, "kitten", metadata=body_metadata(state, "kitten"))
+            render_boogart_sprite(corpse, "kitten_dead", metadata=corpse_metadata(old_state, "kitten_dead"))
+            save_state(paths.state_file, state)
+
+            run_heartbeat(paths, now, RuntimeConfig(dev_fast=True))
+            run_heartbeat(paths, now + timedelta(minutes=1), RuntimeConfig(dev_fast=True))
+            restarted = load_state(paths.state_file)
+            restarted.memory.pop("corpse_bite_counts", None)
+            save_state(paths.state_file, restarted)
+            frame = run_heartbeat(paths, now + timedelta(minutes=2), RuntimeConfig(dev_fast=True))
+
+            self.assertIn("bit_corpse:boogart_dead.png:2/3", frame.events)
+            self.assertEqual(read_png_metadata(corpse)["corpse_bites"], "2")
+
+    def test_moved_or_copied_partial_corpse_keeps_bite_progress(self) -> None:
+        now = datetime(2026, 1, 1, tzinfo=timezone.utc)
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            paths = make_paths(root)
+            paths.desktop.mkdir(parents=True)
+            paths.downloads.mkdir()
+            paths.data_dir.mkdir()
+            state = BoogartState.new("jay")
+            state.current_folder = str(paths.desktop)
+            state.generation = 3
+            state.hunger = 100
+            state.next_hunger_at = (now + timedelta(hours=1)).isoformat(timespec="seconds")
+            state.next_move_at = (now + timedelta(hours=1)).isoformat(timespec="seconds")
+            old_state = BoogartState.new("jay")
+            old_state.boogart_id = state.boogart_id
+            old_state.generation = 1
+            corpse = paths.downloads / "boogart_dead.png"
+            render_boogart_sprite(paths.desktop_boogart_png, "kitten", metadata=body_metadata(state, "kitten"))
+            render_boogart_sprite(corpse, "kitten_dead_bite1", metadata=corpse_metadata(old_state, "kitten_dead", bites=1, visual_stage="kitten_dead_bite1"))
+            save_state(paths.state_file, state)
+
+            notice = run_heartbeat(paths, now, RuntimeConfig(dev_fast=True))
+            frame = run_heartbeat(paths, now + timedelta(minutes=1), RuntimeConfig(dev_fast=True))
+
+            self.assertNotIn("bit_corpse:boogart_dead.png:2/3", notice.events)
+            self.assertIn("bit_corpse:boogart_dead.png:2/3", frame.events)
+            self.assertEqual(read_png_metadata(corpse)["corpse_bites"], "2")
 
     def test_trashed_body_is_recovered_without_death(self) -> None:
         now = datetime(2026, 1, 1, tzinfo=timezone.utc)

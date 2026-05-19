@@ -58,6 +58,10 @@ Starvation death rules:
 - Deleting the live body kills as `dead:deleted`.
 - Starvation kills as `dead:starvation`.
 - Moving the live body to Trash/Recycle is recoverable and alive.
+- Archiving the live body as `boogart.zip`, `boogart.rar`, `boogart.7z`, `boogart.tar`, `boogart.tar.gz`, or `boogart.tgz` puts Boogart into `archived`.
+- `archived` is a reversible containment state with muffled/folded terminal labels and sparse archive logs.
+- Extracting a matching live PNG during the archive grace period recovers Boogart alive.
+- If the archive remains sealed past the grace period, the missing body resolves as `dead:deleted`.
 - Renaming is tolerated early and reacted to later.
 - Copying is delayed and nondestructive.
 - Identity mismatch is fatal only when the file is clearly another Boogart body.
@@ -90,6 +94,8 @@ Boogart scans filenames only. It does not read file contents. Scans are shallow 
 - generated file manifest: `250` total
 
 When caps are reached, Boogart should prefer logs, movement, or silence over creating more files.
+
+Boogart does not inspect or unpack archive contents. Archive detection is based on nearby filenames only. Symlinks are ignored by scanners and rejected as live bodies so the game does not follow or rewrite linked targets. Metadata-stripped hash recovery is only allowed in safe locations such as the expected folder or Trash/Recycle, not arbitrary folders. Backward clock jumps pause active-time accounting instead of rewinding it.
 
 ## Live Terminal
 

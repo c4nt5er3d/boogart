@@ -148,6 +148,8 @@ def age_label(state: BoogartState, now: datetime) -> str:
     age = now - parse_timestamp(state.birth_time)
     if state.lifecycle == "dead":
         return "not moving"
+    if state.lifecycle == "archived":
+        return "folded"
     if age.days < 2:
         return "kitten-ish"
     if age.days < 6:
@@ -162,6 +164,8 @@ def age_label(state: BoogartState, now: datetime) -> str:
 def mood_label(state: BoogartState) -> str:
     if state.lifecycle == "dead":
         return "quiet"
+    if state.lifecycle == "archived":
+        return "muffled"
     if state.hunger >= 100:
         return "hollow"
     if state.hunger >= 90:
@@ -208,6 +212,10 @@ def event_phrase(event: str) -> str:
         return "made a little hollow"
     if event.startswith("nested:"):
         return f"left {event.split(':', 1)[1]}"
+    if event.startswith("archived:"):
+        return "folded into archive"
+    if event == "unarchived":
+        return "heard the zipper open"
     if event.startswith("dead:starvation"):
         return "went very still"
     if event.startswith("respawned"):

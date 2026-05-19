@@ -16,6 +16,7 @@ from boogart.rendering.sprite import render_boogart_sprite
 
 
 HEARTBEAT_SECONDS = 45
+ARCHIVE_EXTENSIONS = (".zip", ".rar", ".7z", ".tar", ".tar.gz", ".tgz")
 FIRST_MOVE_GRACE = timedelta(minutes=10)
 FIRST_DAY_VISIBILITY = timedelta(hours=24)
 DEV_FAST_FIRST_MOVE_GRACE = timedelta(seconds=10)
@@ -29,6 +30,9 @@ FIRST_STARVATION_ACTIVE_MINUTES = 72 * 60
 LATER_STARVATION_ACTIVE_MINUTES = 48 * 60
 STARVATION_DEATH_COOLDOWN_ACTIVE_MINUTES = 7 * 24 * 60
 MAX_ACTIVE_DELTA_MINUTES = 60
+CLOCK_BACKWARD_TOLERANCE = timedelta(minutes=5)
+ARCHIVE_RECOVERY_GRACE = timedelta(hours=24)
+DEV_FAST_ARCHIVE_RECOVERY_GRACE = timedelta(minutes=10)
 FOOD_HUNGER_REDUCTION = 55
 CORPSE_HUNGER_REDUCTION = 80
 CORPSE_BITE_COUNT = 3
@@ -148,8 +152,7 @@ def run_heartbeat(paths: BoogartPaths, now: datetime | None = None, config: Runt
 
     # Secret Ending: Containment check
     if check_containment(frame):
-        frame.state.last_active_at = frame.now.isoformat(timespec="seconds")
-        frame.state.updated_at = frame.state.last_active_at
+        stamp_activity(frame)
         save_state(paths.state_file, frame.state)
         return frame
 
@@ -188,8 +191,7 @@ def run_heartbeat(paths: BoogartPaths, now: datetime | None = None, config: Runt
     status = f"state:Gen {frame.state.generation} | Phase {frame.state.phase} ({frame.state.phase_name}) | Hunger {frame.state.hunger} ({desperation})"
     frame.events.append(status)
 
-    frame.state.last_active_at = frame.now.isoformat(timespec="seconds")
-    frame.state.updated_at = frame.state.last_active_at
+    stamp_activity(frame)
     if not save_state(paths.state_file, frame.state):
         debug_log(paths, "save_state_failed", path=paths.state_file)
     debug_log(
@@ -272,9 +274,23 @@ def track_active_time(frame: HeartbeatFrame) -> None:
 def active_delta_minutes(frame: HeartbeatFrame) -> int:
     last_active = parse_timestamp(frame.state.last_active_at)
     if frame.now <= last_active:
+        if last_active - frame.now > CLOCK_BACKWARD_TOLERANCE:
+            frame.state.memory["clock_jump_detected_at"] = frame.now.isoformat(timespec="seconds")
+            frame.state.memory["clock_jump_last_active_at"] = last_active.isoformat(timespec="seconds")
+            debug_log(frame.paths, "clock_jump_backward", now=frame.now, last_active=last_active)
         return 0
     minutes = int((frame.now - last_active).total_seconds() // 60)
     return max(0, min(MAX_ACTIVE_DELTA_MINUTES, minutes))
+
+
+def stamp_activity(frame: HeartbeatFrame) -> None:
+    last_active = parse_timestamp(frame.state.last_active_at)
+    if frame.now < last_active:
+        frame.state.updated_at = frame.now.isoformat(timespec="seconds")
+        return
+    stamp = frame.now.isoformat(timespec="seconds")
+    frame.state.last_active_at = stamp
+    frame.state.updated_at = stamp
 
 
 def ensure_starvation_memory(frame: HeartbeatFrame) -> None:
@@ -345,7 +361,15 @@ def update_phase(frame: HeartbeatFrame) -> None:
 def inspect_body(frame: HeartbeatFrame) -> None:
     if frame.body_path is None:
         return
+    if frame.state.lifecycle == "archived":
+        inspect_archived_body(frame)
+        return
     body_path = frame.body_path
+    if body_path.is_symlink():
+        debug_log(frame.paths, "body_symlink_ignored", path=body_path)
+        note(frame, "that path is only pretending.")
+        kill(frame, "absence")
+        return
     if not body_path.exists():
         # Check if he was moved within the SAME folder (renaming)
         renamed = renamed_body_candidate(body_path.parent, frame.state)
@@ -380,6 +404,11 @@ def inspect_body(frame: HeartbeatFrame) -> None:
             debug_log(frame.paths, "body_missing_silent", path=body_path)
             return
 
+        archive = find_archive_candidate(frame, body_path.parent)
+        if archive:
+            enter_archive(frame, archive)
+            return
+
         kill(frame, "deleted")
         return
 
@@ -389,6 +418,11 @@ def inspect_body(frame: HeartbeatFrame) -> None:
         if meta and "boogart_id" in meta and meta["boogart_id"] != frame.state.boogart_id:
             # This is someone else's Boogart!
             note(frame, "this isn't me.")
+            kill(frame, "absence")
+            return
+        if meta and not is_body_metadata(meta, frame.state):
+            debug_log(frame.paths, "body_metadata_not_live", path=body_path, metadata=meta)
+            note(frame, "this is only a remainder.")
             kill(frame, "absence")
             return
 
@@ -404,6 +438,88 @@ def inspect_body(frame: HeartbeatFrame) -> None:
                 "i felt that."
             )))
     frame.state.body_hash = current_hash
+
+
+def inspect_archived_body(frame: HeartbeatFrame) -> None:
+    found = None
+    if frame.body_path and is_regular_file(frame.body_path) and is_recoverable_body_file(frame, frame.body_path, allow_hash=True):
+        found = frame.body_path
+    if found is None:
+        found = find_missing_body(frame)
+    if found:
+        recover_archived_body(frame, found)
+        return
+
+    archive = archive_memory_path(frame)
+    if archive is None or not archive.exists() or archive.is_symlink():
+        archive = find_archive_candidate(frame, Path(frame.state.current_folder or frame.paths.desktop))
+    if archive:
+        frame.state.memory["archive_path"] = str(archive)
+        if not frame.state.memory.get("archived_at"):
+            frame.state.memory["archived_at"] = frame.now.isoformat(timespec="seconds")
+        if not repeated_recently(frame, "archive_log_at", days=1):
+            note(frame, archive_line(frame))
+            frame.state.memory["archive_log_at"] = frame.now.isoformat(timespec="seconds")
+        frame.events.append(f"archived:{archive.name}")
+        if archive_grace_expired(frame):
+            frame.state.lifecycle = "alive"
+            kill(frame, "deleted")
+        return
+
+    if archive_grace_expired(frame):
+        frame.state.lifecycle = "alive"
+        kill(frame, "deleted")
+
+
+def enter_archive(frame: HeartbeatFrame, archive: Path) -> None:
+    frame.state.lifecycle = "archived"
+    frame.state.memory["archive_path"] = str(archive)
+    frame.state.memory["archived_at"] = frame.now.isoformat(timespec="seconds")
+    frame.state.memory["archive_original_folder"] = frame.state.current_folder
+    frame.state.memory["archive_original_body_name"] = frame.state.body_name
+    frame.state.memory["archive_log_at"] = frame.now.isoformat(timespec="seconds")
+    note(frame, archive_line(frame), force=True)
+    frame.events.append(f"archived:{archive.name}")
+    debug_log(frame.paths, "body_archived", archive=archive, body=frame.body_path)
+
+
+def recover_archived_body(frame: HeartbeatFrame, body: Path) -> None:
+    old_folder = Path(frame.state.current_folder or frame.paths.desktop)
+    frame.state.lifecycle = "alive"
+    frame.state.current_folder = str(body.parent)
+    frame.state.body_name = body.name
+    frame.body_path = body
+    for key in ("archive_path", "archived_at", "archive_original_folder", "archive_original_body_name", "archive_log_at"):
+        frame.state.memory.pop(key, None)
+    frame.events.append("unarchived")
+    if body.parent != old_folder:
+        react_to_manual_move(frame, body.parent)
+    note(frame, "the corners opened.", force=True)
+    debug_log(frame.paths, "body_unarchived", body=body)
+
+
+def archive_memory_path(frame: HeartbeatFrame) -> Path | None:
+    raw = frame.state.memory.get("archive_path")
+    return Path(str(raw)) if raw else None
+
+
+def archive_grace(frame: HeartbeatFrame) -> timedelta:
+    return DEV_FAST_ARCHIVE_RECOVERY_GRACE if frame.config.dev_fast else ARCHIVE_RECOVERY_GRACE
+
+
+def archive_grace_expired(frame: HeartbeatFrame) -> bool:
+    raw = frame.state.memory.get("archived_at")
+    if not raw:
+        return False
+    return frame.now - parse_timestamp(str(raw)) >= archive_grace(frame)
+
+
+def archive_line(frame: HeartbeatFrame) -> str:
+    return random_for(frame.state, "archive-line").choice((
+        "it is very small in here.",
+        "the walls have corners now.",
+        "i can hear myself through the zipper.",
+    ))
 
 
 def check_territory_health(frame: HeartbeatFrame) -> None:
@@ -669,6 +785,8 @@ def maybe_move(frame: HeartbeatFrame) -> None:
 
     # Polish: Dynamic Desperation Scaling (stay chance drops as hunger rises)
     stay_chance = max(0.02, 0.23 - (frame.state.hunger / 500))
+    if boogart_age(frame) < FIRST_SESSION_PROTECTION and not frame.state.memory.get("first_visible_move_done"):
+        stay_chance = 0
 
     # Polish: Claustrophobic Paralysis
     # If the current folder is highly corrupted, the creature skips movement out of fear
@@ -724,6 +842,7 @@ def maybe_move(frame: HeartbeatFrame) -> None:
         verb = "returned obsessively to"
 
     frame.events.append("moved")
+    frame.state.memory["first_visible_move_done"] = True
 
     # Check if this is a "Chain Move" (moved very recently)
     last_move = frame.state.memory.get("last_move_at")
@@ -838,7 +957,7 @@ def kill(frame: HeartbeatFrame, cause: str) -> None:
     try:
         render_boogart_sprite(corpse, corpse_sprite, metadata=corpse_metadata(frame.state, corpse_sprite))
         remember_generated_file(frame.state, corpse)
-        if frame.body_path and frame.body_path.exists() and frame.body_path != corpse:
+        if frame.body_path and frame.body_path.exists() and frame.body_path != corpse and not frame.body_path.is_symlink():
             try:
                 frame.body_path.unlink()
             except OSError as exc:
@@ -1183,14 +1302,14 @@ def in_first_day_visibility(frame: HeartbeatFrame) -> bool:
 def iter_food(roots: tuple[Path, ...]):
     for root in roots:
         for path in bounded_walk(root):
-            if path.is_file() and path.suffix.lower() == ".food":
+            if is_regular_file(path) and path.suffix.lower() == ".food":
                 yield path
 
 
 def iter_corpses(roots: tuple[Path, ...]):
     for root in roots:
         for path in bounded_walk(root):
-            if path.is_file() and path.name in ("boogart_dead.png", "boogart_husk.png"):
+            if is_regular_file(path) and path.name in ("boogart_dead.png", "boogart_husk.png"):
                 yield path
 
 
@@ -1212,13 +1331,13 @@ def bounded_walk(root: Path):
             yield child
             if seen >= MAX_SCAN_ENTRIES:
                 return
-            if depth < MAX_SCAN_DEPTH and child.is_dir() and is_roamable(child):
+            if depth < MAX_SCAN_DEPTH and child.is_dir() and not child.is_symlink() and is_roamable(child):
                 stack.append((child, depth + 1))
 
 
 def safe_entries(folder: Path) -> list[Path]:
     try:
-        return sorted(folder.iterdir(), key=lambda path: path.name.lower())[:MAX_SCAN_ENTRIES]
+        return sorted((path for path in folder.iterdir() if not path.is_symlink()), key=lambda path: path.name.lower())[:MAX_SCAN_ENTRIES]
     except OSError:
         return []
 
@@ -1261,7 +1380,7 @@ def find_body_copies(frame: HeartbeatFrame) -> list[Path]:
             if key in seen:
                 continue
             seen.add(key)
-            if path.is_file() and path.suffix.lower() == ".png":
+            if is_regular_file(path) and path.suffix.lower() == ".png":
                 meta = read_png_metadata(path)
                 if is_body_metadata(meta, frame.state):
                     copies.append(path)
@@ -1273,21 +1392,74 @@ def find_missing_body(frame: HeartbeatFrame) -> Path | None:
     roots = (*trash_locations(frame.paths), *roaming_roots(frame.paths))
     for root in roots:
         fast_path = root / frame.state.body_name
-        if fast_path.is_file():
-            meta = read_png_metadata(fast_path)
-            if is_body_metadata(meta, frame.state):
-                return fast_path
-            if not meta and frame.state.body_hash and file_hash(fast_path) == frame.state.body_hash:
+        if is_regular_file(fast_path):
+            if is_recoverable_body_file(frame, fast_path, allow_hash=can_use_hash_fallback(frame, fast_path)):
                 return fast_path
 
     # FALLBACK: Full walk if he was renamed AND moved
     for root in roots:
         for path in bounded_walk(root):
-            if path.is_file() and path.suffix.lower() == ".png":
+            if is_regular_file(path) and path.suffix.lower() == ".png":
                 # Only trust the ID, filenames can change during move
-                meta = read_png_metadata(path)
-                if is_body_metadata(meta, frame.state):
+                if is_recoverable_body_file(frame, path, allow_hash=False):
                     return path
+    return None
+
+
+def is_regular_file(path: Path) -> bool:
+    try:
+        return path.is_file() and not path.is_symlink()
+    except OSError:
+        return False
+
+
+def is_recoverable_body_file(frame: HeartbeatFrame, path: Path, allow_hash: bool = False) -> bool:
+    if not is_regular_file(path) or path.suffix.lower() != ".png":
+        return False
+    meta = read_png_metadata(path)
+    if is_body_metadata(meta, frame.state):
+        return True
+    return bool(allow_hash and not meta and safe_body_hash_match(frame, path))
+
+
+def safe_body_hash_match(frame: HeartbeatFrame, path: Path) -> bool:
+    return bool(frame.state.body_hash and file_hash(path) == frame.state.body_hash)
+
+
+def can_use_hash_fallback(frame: HeartbeatFrame, path: Path) -> bool:
+    if not frame.state.body_hash:
+        return False
+    expected_parent = Path(frame.state.current_folder or frame.paths.desktop)
+    if path.parent == expected_parent:
+        return True
+    return any(is_within(path, trash) for trash in trash_locations(frame.paths))
+
+
+def find_archive_candidate(frame: HeartbeatFrame, near: Path) -> Path | None:
+    folders = [near]
+    for root in roaming_roots(frame.paths):
+        if root not in folders:
+            folders.append(root)
+    for folder in folders:
+        for path in safe_entries(folder):
+            if is_archive_candidate(frame, path):
+                return path
+    return None
+
+
+def is_archive_candidate(frame: HeartbeatFrame, path: Path) -> bool:
+    if not is_regular_file(path):
+        return False
+    name = path.name.lower()
+    stem_names = {"boogart", Path(frame.state.body_name).stem.lower()}
+    archive_stem = archive_stem_name(name)
+    return archive_stem is not None and archive_stem in stem_names
+
+
+def archive_stem_name(name: str) -> str | None:
+    for suffix in ARCHIVE_EXTENSIONS:
+        if name.endswith(suffix):
+            return name[: -len(suffix)]
     return None
 
 
@@ -1311,7 +1483,7 @@ def react_to_manual_move(frame: HeartbeatFrame, destination: Path) -> None:
     # Check for clones in the new destination immediately
     entries = safe_entries(destination)
     for entry in entries:
-        if entry.is_file() and entry.suffix.lower() == ".png" and entry != frame.body_path:
+        if is_regular_file(entry) and entry.suffix.lower() == ".png" and entry != frame.body_path:
             meta = read_png_metadata(entry)
             if is_body_metadata(meta, frame.state):
                 # GDD: Identity rupture
@@ -1321,7 +1493,7 @@ def react_to_manual_move(frame: HeartbeatFrame, destination: Path) -> None:
 
 
 def renamed_body_candidate(folder: Path, state: BoogartState) -> Path | None:
-    candidates = [path for path in safe_entries(folder) if path.is_file() and path.suffix.lower() == ".png" and path.name not in {"boogart_dead.png", "boogart_husk.png"}]
+    candidates = [path for path in safe_entries(folder) if is_regular_file(path) and path.suffix.lower() == ".png" and path.name not in {"boogart_dead.png", "boogart_husk.png"}]
 
     # If there's exactly one candidate, it MUST have our ID to be us
     if len(candidates) == 1:
