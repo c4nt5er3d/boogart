@@ -276,7 +276,7 @@ class GddRuntimeTests(unittest.TestCase):
 
             self.assertIn("BOOGART LIVE", panel)
             self.assertIn("hunger:", panel)
-            self.assertIn("16:01", panel)
+            self.assertIn("08:01", panel)
             self.assertIn("left hair.txt", panel)
 
     def test_hunger_100_does_not_kill_before_starvation_grace(self) -> None:

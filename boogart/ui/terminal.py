@@ -195,7 +195,7 @@ def recent_today_lines(paths: BoogartPaths, now: datetime, events: list[str]) ->
     except OSError:
         raw_lines = []
     for raw in raw_lines[-12:]:
-        phrase = log_phrase(raw)
+        phrase = log_phrase(raw, now)
         if phrase:
             lines.append(phrase)
     return lines[-6:]
@@ -223,13 +223,14 @@ def event_phrase(event: str) -> str:
     return ""
 
 
-def log_phrase(line: str) -> str:
+def log_phrase(line: str, now: datetime | None = None) -> str:
     if "]: " not in line:
         return ""
     time_part, text = line.split("]: ", 1)
     stamp = time_part.strip("[")
     try:
-        clock = parse_timestamp(stamp).astimezone().strftime("%H:%M")
+        target_tz = now.tzinfo if now and now.tzinfo else None
+        clock = parse_timestamp(stamp).astimezone(target_tz).strftime("%H:%M")
     except (TypeError, ValueError):
         clock = stamp[-5:] if len(stamp) >= 5 else "--:--"
     return f"{clock}  {text}"
