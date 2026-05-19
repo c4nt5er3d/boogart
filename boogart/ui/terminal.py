@@ -1,7 +1,12 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+from datetime import datetime
 from typing import Any
+
+from boogart.core.growth import parse_timestamp
+from boogart.core.paths import BoogartPaths
+from boogart.core.state import BoogartState
 
 
 INTRO_TEXT = """\
@@ -113,3 +118,110 @@ class ConsoleSetupTerminal:
         username = input("> BOOGART SETUP\n\nwhat should boogart call you?\n\n> ").strip()
         self.on_complete(username or "friend")
         print("\ndone.")
+
+
+def render_live_panel(paths: BoogartPaths, state: BoogartState, events: list[str] | None = None, now: datetime | None = None) -> str:
+    current_time = now or datetime.now().astimezone()
+    today_lines = recent_today_lines(paths, current_time, events or [])
+    while len(today_lines) < 6:
+        today_lines.append("waiting for you")
+
+    rows = [
+        ("age", age_label(state, current_time)),
+        ("mood", mood_label(state)),
+        ("trust", meter(min(10, max(0, 3 + state.affection // 2)))),
+        ("hunger", meter(round(state.hunger / 10))),
+        ("wrongness", meter(min(10, max(0, state.phase + state.death_count // 2)))),
+    ]
+    width = 32
+    lines = ["┌─ BOOGART LIVE ────────────────┐"]
+    for label, value in rows:
+        lines.append(f"│ {label}: {value}".ljust(width + 1) + "│")
+    lines.append("├─ TODAY ───────────────────────┤")
+    for line in today_lines[-6:]:
+        lines.append(f"│ {line[:28]}".ljust(width + 1) + "│")
+    lines.append("└────────────────────────────────┘")
+    return "\n".join(lines)
+
+
+def age_label(state: BoogartState, now: datetime) -> str:
+    age = now - parse_timestamp(state.birth_time)
+    if state.lifecycle == "dead":
+        return "not moving"
+    if age.days < 2:
+        return "kitten-ish"
+    if age.days < 6:
+        return "small and certain"
+    if age.days < 12:
+        return "learning doors"
+    if age.days < 30:
+        return "not quite right"
+    return "old enough"
+
+
+def mood_label(state: BoogartState) -> str:
+    if state.lifecycle == "dead":
+        return "quiet"
+    if state.hunger >= 100:
+        return "hollow"
+    if state.hunger >= 90:
+        return "too polite"
+    if state.hunger >= 70:
+        return "pretending"
+    if state.affection >= 6:
+        return "almost trusting"
+    if state.phase >= 5:
+        return "listening"
+    return "curious"
+
+
+def meter(value: int, width: int = 10) -> str:
+    filled = max(0, min(width, value))
+    return "█" * filled + "░" * (width - filled)
+
+
+def recent_today_lines(paths: BoogartPaths, now: datetime, events: list[str]) -> list[str]:
+    lines: list[str] = []
+    for event in events:
+        phrase = event_phrase(event)
+        if phrase:
+            lines.append(f"{now.strftime('%H:%M')}  {phrase}")
+    try:
+        raw_lines = paths.log_file.read_text(encoding="utf-8").splitlines()
+    except OSError:
+        raw_lines = []
+    for raw in raw_lines[-12:]:
+        phrase = log_phrase(raw)
+        if phrase:
+            lines.append(phrase)
+    return lines[-6:]
+
+
+def event_phrase(event: str) -> str:
+    if event == "moved":
+        return "found warm folder"
+    if event.startswith("ate:"):
+        return "ate offering"
+    if event.startswith("txt:"):
+        return f"left {event.split(':', 1)[1]}"
+    if event.startswith("burrowed:"):
+        return "made a little hollow"
+    if event.startswith("nested:"):
+        return f"left {event.split(':', 1)[1]}"
+    if event.startswith("dead:starvation"):
+        return "went very still"
+    if event.startswith("respawned"):
+        return "blinked again"
+    return ""
+
+
+def log_phrase(line: str) -> str:
+    if "]: " not in line:
+        return ""
+    time_part, text = line.split("]: ", 1)
+    stamp = time_part.strip("[")
+    try:
+        clock = parse_timestamp(stamp).astimezone().strftime("%H:%M")
+    except (TypeError, ValueError):
+        clock = stamp[-5:] if len(stamp) >= 5 else "--:--"
+    return f"{clock}  {text}"

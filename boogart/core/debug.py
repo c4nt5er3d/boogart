@@ -13,6 +13,12 @@ def debug_log(paths: BoogartPaths, event: str, **fields: object) -> None:
         line = format_debug_line(event, fields)
         with paths.debug_file.open("a", encoding="utf-8") as handle:
             handle.write(line + "\n")
+
+        # Basic rotation: keep it under ~1000 lines
+        if event == "heartbeat" and paths.debug_file.stat().st_size > 100_000:
+            lines = paths.debug_file.read_text(encoding="utf-8", errors="replace").splitlines()
+            if len(lines) > 1200:
+                paths.debug_file.write_text("\n".join(lines[-1000:]) + "\n", encoding="utf-8")
     except OSError:
         return
 

@@ -42,11 +42,25 @@ class BoogartState:
     last_log_day: str
     log_count_today: int
     txt_count_today: int
+    nest_count_today: int
     addressed_username: bool
     generated_files: list[str] = field(default_factory=list)
     manifest: list[str] = field(default_factory=list)
     favorites: dict[str, int] = field(default_factory=dict)
+    corruption: dict[str, int] = field(default_factory=dict)
     memory: dict[str, object] = field(default_factory=dict)
+
+    @property
+    def phase_name(self) -> str:
+        names = {
+            1: "Newborn",
+            2: "Explorer",
+            3: "Territorial",
+            4: "Obsessed",
+            5: "Corrupted",
+            6: "Broken"
+        }
+        return names.get(self.phase, "Unknown")
 
     @classmethod
     def new(cls, username: str) -> "BoogartState":
@@ -79,16 +93,21 @@ class BoogartState:
             last_log_day="",
             log_count_today=0,
             txt_count_today=0,
+            nest_count_today=0,
             addressed_username=False,
         )
 
 
-def save_state(path: Path, state: BoogartState) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    payload = json.dumps(asdict(state), indent=2, sort_keys=True)
-    tmp = path.with_suffix(path.suffix + ".tmp")
-    tmp.write_text(payload, encoding="utf-8")
-    tmp.replace(path)
+def save_state(path: Path, state: BoogartState) -> bool:
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        payload = json.dumps(asdict(state), indent=2, sort_keys=True)
+        tmp = path.with_suffix(path.suffix + ".tmp")
+        tmp.write_text(payload, encoding="utf-8")
+        tmp.replace(path)
+    except OSError:
+        return False
+    return True
 
 
 def load_state(path: Path) -> BoogartState:
@@ -117,10 +136,12 @@ def state_from_dict(data: dict[str, object]) -> BoogartState:
     state.affection = max(0, int(state.affection or 0))
     state.log_count_today = max(0, int(state.log_count_today or 0))
     state.txt_count_today = max(0, int(state.txt_count_today or 0))
+    state.nest_count_today = max(0, int(state.nest_count_today or 0))
     state.lineage = [str(item) for item in _list(state.lineage)] or [state.boogart_id]
     state.generated_files = [str(item) for item in _list(state.generated_files)]
     state.manifest = [str(item) for item in _list(state.manifest)]
     state.favorites = {str(key): int(value) for key, value in _dict(state.favorites).items() if isinstance(value, int)}
+    state.corruption = {str(key): int(value) for key, value in _dict(state.corruption).items() if isinstance(value, int)}
     state.memory = _dict(state.memory)
     return state
 
@@ -154,10 +175,12 @@ def migrate_state_dict(data: dict[str, object]) -> dict[str, object]:
     migrated.setdefault("last_log_day", "")
     migrated.setdefault("log_count_today", 0)
     migrated.setdefault("txt_count_today", 0)
+    migrated.setdefault("nest_count_today", 0)
     migrated.setdefault("copy_count", 0)
     migrated.setdefault("body_hash", "")
     migrated.setdefault("manifest", migrated.get("generated_files") or [])
     migrated.setdefault("favorites", {})
+    migrated.setdefault("corruption", {})
     migrated.setdefault("memory", {})
     migrated.setdefault("addressed_username", False)
     return migrated

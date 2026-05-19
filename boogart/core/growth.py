@@ -14,10 +14,11 @@ class GrowthStage:
 
 STAGES: tuple[GrowthStage, ...] = (
     GrowthStage("kitten", "Kitten", 1, timedelta()),
-    GrowthStage("cat", "Cat", 2, timedelta(days=3)),
-    GrowthStage("shifting", "Shifting", 3, timedelta(days=14)),
-    GrowthStage("wrong", "Wrong", 4, timedelta(days=30)),
-    GrowthStage("final", "Final Form", 6, timedelta(days=60)),
+    GrowthStage("cat", "Cat", 2, timedelta(days=2)),
+    GrowthStage("shifting", "Shifting", 3, timedelta(days=6)),
+    GrowthStage("wrong", "Wrong", 4, timedelta(days=12)),
+    GrowthStage("corrupt", "Corrupt", 5, timedelta(days=20)),
+    GrowthStage("final", "Final Form", 6, timedelta(days=30)),
 )
 
 STAGE_IDS = tuple(stage.id for stage in STAGES)

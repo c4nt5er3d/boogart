@@ -1,15 +1,17 @@
 # -*- mode: python ; coding: utf-8 -*-
 
 from pathlib import Path
+from PyInstaller.utils.hooks import collect_data_files
 
 ROOT = Path(__file__).resolve().parents[1]
+DATAS = collect_data_files("boogart.rendering", includes=["assets/*.png"])
 
 
 a = Analysis(
     [str(ROOT / "boogart" / "__main__.py")],
     pathex=[str(ROOT)],
     binaries=[],
-    datas=[],
+    datas=DATAS,
     hiddenimports=[],
     hookspath=[],
     hooksconfig={},

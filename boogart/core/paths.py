@@ -18,12 +18,42 @@ class BoogartPaths:
     videos: Path
     data_dir: Path
     state_file: Path
+    lock_file: Path
+    tether_file: Path
     debug_file: Path
     log_file: Path
     desktop_boogart_png: Path
 
     @classmethod
-    def discover(cls) -> "BoogartPaths":
+    def discover(cls, sandbox_root: Path | None = None) -> "BoogartPaths":
+        if sandbox_root:
+            sandbox_root = sandbox_root.resolve()
+            home = sandbox_root
+            desktop = sandbox_root / "Desktop"
+            documents = sandbox_root / "Documents"
+            downloads = sandbox_root / "Downloads"
+            pictures = sandbox_root / "Pictures"
+            music = sandbox_root / "Music"
+            videos = sandbox_root / "Videos"
+            data_dir = sandbox_root / ".boogart"
+
+            return cls(
+                home=home,
+                desktop=desktop,
+                documents=documents,
+                downloads=downloads,
+                pictures=pictures,
+                music=music,
+                videos=videos,
+                data_dir=data_dir,
+                state_file=data_dir / "state.json",
+                lock_file=data_dir / "boogart.lock",
+                tether_file=home / ".boogart_tether",
+                debug_file=data_dir / "debug.txt",
+                log_file=desktop / "log.txt",
+                desktop_boogart_png=desktop / "boogart.png",
+            )
+
         home = Path.home()
         if sys.platform == "win32":
             desktop = windows_known_folder("Desktop") or windows_onedrive_folder("Desktop") or Path(os.environ.get("USERPROFILE", home)) / "Desktop"
@@ -56,6 +86,8 @@ class BoogartPaths:
             videos=videos,
             data_dir=data_dir,
             state_file=data_dir / "state.json",
+            lock_file=data_dir / "boogart.lock",
+            tether_file=home / ".boogart_tether",
             debug_file=data_dir / "debug.txt",
             log_file=desktop / "log.txt",
             desktop_boogart_png=desktop / "boogart.png",
@@ -138,6 +170,7 @@ def debug_paths(paths: BoogartPaths) -> dict[str, str]:
         "downloads": str(paths.downloads),
         "data_dir": str(paths.data_dir),
         "state_file": str(paths.state_file),
+        "lock_file": str(paths.lock_file),
         "debug_file": str(paths.debug_file),
         "log_file": str(paths.log_file),
         "desktop_boogart_png": str(paths.desktop_boogart_png),

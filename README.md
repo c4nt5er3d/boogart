@@ -1,30 +1,46 @@
 # Boogart
 
-Boogart is a small desktop companion that lives on the file system. The game is intentionally tiny on the surface:
+Boogart is a cozy-horror desktop pet that lives in your files. The visible game is tiny on purpose:
 
 - `boogart.png` is the body.
 - `log.txt` is what he experiences.
-- `state.json` is private engine state in the app data directory.
+- `.food` files are offerings.
+- private state lives in the app data directory, not beside the player files.
 
-Everything else exists to keep those files current without turning the experience into a dashboard.
+The Steam promise is: a tiny desktop pet that wanders, eats offerings, leaves traces, and gets stranger when ignored.
 
-## Current Mechanics
+## Current Feature Set
 
-- First launch shows the plain setup terminal from the GDD.
-- Boogart starts on the Desktop as `boogart.png`.
-- The log starts with one simple `mrrp.` line.
-- Heartbeats run quietly and only log up to three entries per day.
-- Boogart eats `.food` files found in a shallow, bounded Desktop/Downloads scan.
-- Movement uses jittered intervals and sometimes intentionally does nothing.
-- He may drop at most one `hey*.txt` file per day.
-- If `boogart.png` is deleted, `boogart_dead.png` is left behind.
-- After 48 hours dead, a missing corpse is replaced by `boogart_husk.png`.
-- Copy reactions are delayed and create `too many.txt` beside detected copies.
-- PNG files include hidden text metadata for identity, lineage, generation, birth time, stage, copy count, and death count.
+- First launch installs Boogart on the Desktop with a setup terminal.
+- Heartbeats run quietly in the background and update movement, hunger, logs, notes, and body rendering.
+- `--live` shows a compact terminal panel with age, mood, trust, hunger, wrongness, and recent events.
+- Boogart scans filenames only. He does not read file contents.
+- Movement is shallow, bounded, and biased toward Desktop/Downloads early so the first session stays legible.
+- Hunger uses a five-stage mood curve. Starvation death is active-time based, protected for the first two hours, and capped by cooldown.
+- Feeding with `.food` lowers hunger by `55`, clears starvation progress, and can leave small residue artifacts.
+- Old corpses can be eaten for a larger hunger reduction, but the most recent body is protected from immediate corpse eating.
+- Deleting the live body kills as `dead:deleted`; starvation kills as `dead:starvation`.
+- Trash/Recycle Bin recovery treats a moved body as recoverable and alive.
+- Copy reactions are delayed, nondestructive, and based on body metadata.
+- Generated file churn is capped so long-running players do not get hundreds of artifacts.
+- Cleanup removes generated files, private state, lock files, debug logs, and the hidden tether.
 
-## Boundaries
+## Metadata Contract
 
-Boogart scans filenames only. He does not read file contents, modify unrelated files, open browsers, play jumpscares, or surface internal stats. The scanner is capped by depth and entry count, and common cloud-sync/system-heavy folders are avoided.
+Every live Boogart PNG carries `tEXt` metadata:
+
+- `boogart_id`
+- `generation`
+- `birth_time`
+- `stage`
+- `lineage`
+- `parent_id`
+- `death_count`
+- `copy_count`
+- `boogart_artifact`
+- `not_body`
+
+Body detection only accepts metadata marked as a real body. Residue, nest artifacts, and dead bodies are marked so they cannot be mistaken for the live creature during recovery or copy reactions.
 
 ## Run Locally
 
@@ -32,39 +48,28 @@ Boogart scans filenames only. He does not read file contents, modify unrelated f
 python3 -m boogart
 ```
 
-## Public Download
-
-For public Windows downloads, use the latest GitHub Release:
-
-1. Open the repository on GitHub.
-2. Click **Releases**.
-3. Open the latest version.
-4. Download `Boogart-windows.zip` or `Boogart.exe`.
-5. Unzip if needed, then run `Boogart.exe`.
-
-Maintainers can publish a public download by pushing a version tag:
-
-```bash
-git tag v0.1.0
-git push origin v0.1.0
-```
-
-Run one heartbeat without opening the setup terminal:
+Run one heartbeat:
 
 ```bash
 python3 -m boogart --once --name jay
 ```
 
-Run a fast local playtest. This creates Boogart if needed, speeds up timers, runs a finite number of heartbeats, prints a short summary, and exits:
+Run a fast finite simulation:
 
 ```bash
 python3 -m boogart --simulate 48 --step-minutes 15 --name jay
 ```
 
-For a live accelerated loop:
+Run a live accelerated loop:
 
 ```bash
-python3 -m boogart --dev-fast --name jay
+python3 -m boogart --dev-fast --live --name jay
+```
+
+Run safely inside a sandbox folder:
+
+```bash
+python3 -m boogart --sandbox /tmp/boogart-sandbox --dev-fast --live --name jay
 ```
 
 Clean up generated files and private state:
@@ -73,8 +78,63 @@ Clean up generated files and private state:
 boogart-cleanup --yes
 ```
 
-## Tests
+## Steam / Single Exe Build
+
+The Windows build uses PyInstaller and bundles `boogart/rendering/assets/*.png` through `packaging/Boogart.spec`.
+
+From Windows PowerShell:
+
+```powershell
+.\scripts\build_windows.ps1 -Clean
+```
+
+Manual equivalent:
+
+```powershell
+py -3.11 -m pip install --upgrade pip
+py -3.11 -m pip install -e .
+py -3.11 -m pip install pyinstaller
+py -3.11 -m unittest discover -s tests
+py -3.11 -m PyInstaller packaging/Boogart.spec --clean --noconfirm
+```
+
+The executable is written to:
+
+```text
+dist/Boogart.exe
+```
+
+Steam depot candidate:
+
+- `dist/Boogart.exe`
+- no source tree, tests, sandbox files, cache files, or local state
+
+## Release
+
+For public Windows downloads, use the GitHub Release workflow. Maintainers can publish by pushing a version tag:
+
+```bash
+git tag v0.1.4
+git push origin v0.1.4
+```
+
+The release workflow uploads:
+
+- `Boogart.exe`
+- `Boogart-windows.zip`
+
+## Verification
+
+Before packaging or release:
 
 ```bash
 pytest -q
+PYTHONPYCACHEPREFIX=/private/tmp/boogart_pycache python3 -m compileall -q boogart tests
+git diff --check
 ```
+
+Recent readiness sims:
+
+- focused interaction matrix: food, copy reaction, Trash recovery, full deletion, respawn, latest corpse preservation, starvation death, live panel
+- blank 100-day soak: `14` starvation deaths, final alive, `191` files total
+- fed-every-other-day 100-day soak: `0` starvation deaths

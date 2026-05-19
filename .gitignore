@@ -2,8 +2,11 @@ __pycache__/
 *.py[cod]
 .Python
 .DS_Store
+.pytest_cache/
 .venv/
 venv/
 build/
 dist/
+release/
+sandbox/
 *.egg-info/

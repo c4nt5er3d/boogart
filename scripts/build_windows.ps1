@@ -12,6 +12,6 @@ py -3.11 -m pip install --upgrade pip
 py -3.11 -m pip install -e .
 py -3.11 -m pip install pyinstaller
 py -3.11 -m unittest discover -s tests
-py -3.11 -m PyInstaller packaging/Boogart.spec --noconfirm
+py -3.11 -m PyInstaller packaging/Boogart.spec --clean --noconfirm
 
 Write-Host "Built dist/Boogart.exe"
