@@ -13,7 +13,7 @@ from boogart.core.paths import BoogartPaths
 from boogart.core.state import BoogartState, load_state, save_state, state_from_dict
 from boogart.rendering.png import read_png_metadata
 from boogart.rendering.sprite import render_boogart_sprite
-from boogart.runtime import HeartbeatFrame, RuntimeConfig, artifact_metadata, body_metadata, movement_candidates, run_heartbeat, run_simulation
+from boogart.runtime import HeartbeatFrame, RuntimeConfig, artifact_metadata, body_metadata, corpse_metadata, movement_candidates, run_heartbeat, run_simulation
 from boogart.ui.terminal import render_live_panel
 
 
@@ -638,6 +638,56 @@ class GddRuntimeTests(unittest.TestCase):
             self.assertTrue((paths.desktop / "boogart.png").exists())
             self.assertEqual(saved.body_name, "boogart.png")
             self.assertNotIn("ate_corpse:boogart_dead.png", frame.events)
+
+    def test_old_corpse_takes_three_bites_and_bloodies_live_body(self) -> None:
+        now = datetime(2026, 1, 1, tzinfo=timezone.utc)
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            paths = make_paths(root)
+            paths.desktop.mkdir(parents=True)
+            paths.data_dir.mkdir()
+            state = BoogartState.new("jay")
+            state.current_folder = str(paths.desktop)
+            state.generation = 3
+            state.hunger = 100
+            state.next_hunger_at = (now + timedelta(hours=1)).isoformat(timespec="seconds")
+            state.next_move_at = (now + timedelta(hours=1)).isoformat(timespec="seconds")
+            old_state = BoogartState.new("jay")
+            old_state.boogart_id = state.boogart_id
+            old_state.generation = 1
+            render_boogart_sprite(paths.desktop_boogart_png, "kitten", metadata=body_metadata(state, "kitten"))
+            render_boogart_sprite(paths.desktop / "boogart_dead.png", "kitten_dead", metadata=corpse_metadata(old_state, "kitten_dead"))
+            save_state(paths.state_file, state)
+
+            notice = run_heartbeat(paths, now, RuntimeConfig(dev_fast=True))
+            bite_one = run_heartbeat(paths, now + timedelta(minutes=1), RuntimeConfig(dev_fast=True))
+            after_one = read_png_metadata(paths.desktop / "boogart_dead.png")
+            live_after_one = read_png_metadata(paths.desktop_boogart_png)
+            bite_two = run_heartbeat(paths, now + timedelta(minutes=2), RuntimeConfig(dev_fast=True))
+            after_two = read_png_metadata(paths.desktop / "boogart_dead.png")
+            final_bite = run_heartbeat(paths, now + timedelta(minutes=3), RuntimeConfig(dev_fast=True))
+            saved = load_state(paths.state_file)
+            live_after_final = read_png_metadata(paths.desktop_boogart_png)
+
+            self.assertNotIn("bit_corpse:boogart_dead.png:1/3", notice.events)
+            self.assertIn("bit_corpse:boogart_dead.png:1/3", bite_one.events)
+            self.assertEqual(after_one["corpse_bites"], "1")
+            self.assertEqual(after_one["visual_state"], "kitten_dead_bite1")
+            self.assertEqual(after_one["generation"], "1")
+            self.assertEqual(live_after_one["stage"], "kitten")
+            self.assertEqual(live_after_one["visual_state"], "kitten_bloody1")
+            self.assertEqual(live_after_one["blood_level"], "1")
+            self.assertIn("bit_corpse:boogart_dead.png:2/3", bite_two.events)
+            self.assertEqual(after_two["corpse_bites"], "2")
+            self.assertEqual(after_two["visual_state"], "kitten_dead_bite2")
+            self.assertIn("ate_corpse:boogart_dead.png", final_bite.events)
+            self.assertFalse((paths.desktop / "boogart_dead.png").exists())
+            self.assertEqual(saved.hunger, 20)
+            self.assertEqual(saved.memory["corpse_bites"], 3)
+            self.assertEqual(saved.memory["cannibal_blood_level"], 3)
+            self.assertEqual(live_after_final["stage"], "kitten")
+            self.assertEqual(live_after_final["visual_state"], "kitten_bloody3")
+            self.assertEqual(live_after_final["blood_level"], "3")
 
     def test_trashed_body_is_recovered_without_death(self) -> None:
         now = datetime(2026, 1, 1, tzinfo=timezone.utc)

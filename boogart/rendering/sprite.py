@@ -13,6 +13,7 @@ FUR: Color = (238, 190, 117, 255)
 DARK_FUR: Color = (196, 126, 70, 255)
 EAR: Color = (241, 151, 151, 255)
 EYE: Color = (33, 41, 44, 255)
+BLOOD: Color = (132, 16, 24, 255)
 
 
 BASE_SPRITE = [
@@ -35,17 +36,20 @@ BASE_SPRITE = [
 ]
 
 STAGE_SPRITE_FILES: dict[str, str] = {
-    "kitten": "cat.png",
-    "cat": "cat.png",
-    "shifting": "cat.png",
-    "wrong": "cat.png",
-    "corrupt": "cat.png",
-    "final": "cat.png",
-    "residue": "bone.png",
-    "husk": "dead.png",
+    stage_id: f"{stage_id}.png"
+    for stage_id in STAGE_IDS
 }
+STAGE_SPRITE_FILES.update({
+    "residue": "bone.png",
+    "husk": "husk.png",
+})
 for stage_id in STAGE_IDS:
-    STAGE_SPRITE_FILES[f"{stage_id}_dead"] = "dead.png"
+    STAGE_SPRITE_FILES[f"{stage_id}_dead"] = f"{stage_id}_dead.png"
+    for level in range(1, 4):
+        STAGE_SPRITE_FILES[f"{stage_id}_bloody{level}"] = f"{stage_id}_bloody{level}.png"
+        STAGE_SPRITE_FILES[f"{stage_id}_dead_bite{level}"] = f"{stage_id}_dead_bite{level}.png"
+for level in range(1, 4):
+    STAGE_SPRITE_FILES[f"husk_bite{level}"] = f"husk_bite{level}.png"
 
 STAGE_SPRITES: dict[str, list[str]] = {
     "residue": [
@@ -170,6 +174,7 @@ PALETTE: dict[str, Color] = {
     "D": DARK_FUR,
     "E": EYE,
     "P": EAR,
+    "B": BLOOD,
 }
 
 
@@ -177,6 +182,52 @@ def sprite_asset_path(assets_dir: Path, stage: str) -> Path:
     if stage not in STAGE_SPRITE_FILES:
         raise ValueError(f"unknown sprite stage: {stage}")
     return assets_dir / STAGE_SPRITE_FILES[stage]
+
+
+def sprite_asset_candidates(assets_dir: Path, stage: str) -> list[Path]:
+    candidates = [sprite_asset_path(assets_dir, stage)]
+    if requires_exact_asset(stage):
+        return candidates
+
+    base = base_stage_for_visual(stage)
+    if base in STAGE_IDS:
+        candidates.append(assets_dir / "cat.png")
+    elif base.endswith("_dead") or base == "husk":
+        candidates.append(assets_dir / "dead.png")
+    elif base == "residue":
+        candidates.append(assets_dir / "bone.png")
+
+    deduped: list[Path] = []
+    for candidate in candidates:
+        if candidate not in deduped:
+            deduped.append(candidate)
+    return deduped
+
+
+def requires_exact_asset(stage: str) -> bool:
+    return "_bloody" in stage or "_bite" in stage
+
+
+def base_stage_for_visual(stage: str) -> str:
+    if "_bloody" in stage:
+        return stage.split("_bloody", 1)[0]
+    if "_bite" in stage:
+        return stage.split("_bite", 1)[0]
+    return stage
+
+
+def visual_stage_level(stage: str) -> int:
+    marker = "_bloody" if "_bloody" in stage else "_bite" if "_bite" in stage else ""
+    if not marker:
+        return 0
+    try:
+        return max(1, min(3, int(stage.rsplit(marker, 1)[1])))
+    except ValueError:
+        return 1
+
+
+def valid_sprite_stages() -> set[str]:
+    return set(STAGE_SPRITE_FILES)
 
 
 def default_assets_dir() -> Path:
@@ -190,17 +241,14 @@ def render_boogart_sprite(
     scale: int = 8,
     metadata: dict[str, str] | None = None,
 ) -> None:
-    valid_stages = list(STAGE_IDS) + ["residue", "husk"]
-    for s_id in STAGE_IDS:
-        valid_stages.append(f"{s_id}_dead")
-
-    if stage not in valid_stages:
+    if stage not in valid_sprite_stages():
         raise ValueError(f"unknown sprite stage: {stage}")
 
     assets_dir = assets_dir or default_assets_dir()
     if assets_dir:
-        asset_path = sprite_asset_path(assets_dir, stage)
-        if asset_path.exists():
+        for asset_path in sprite_asset_candidates(assets_dir, stage):
+            if not asset_path.exists():
+                continue
             path.parent.mkdir(parents=True, exist_ok=True)
             copyfile(asset_path, path)
             add_png_metadata(path, metadata)
@@ -210,7 +258,7 @@ def render_boogart_sprite(
 
 
 def render_placeholder_boogart(path: Path, stage: str = "kitten", scale: int = 8, metadata: dict[str, str] | None = None) -> None:
-    sprite = STAGE_SPRITES.get(stage, BASE_SPRITE)
+    sprite = apply_visual_blood(STAGE_SPRITES.get(base_stage_for_visual(stage), BASE_SPRITE), stage)
 
     # Scale down residue to be tiny (2x instead of 8x)
     actual_scale = 2 if stage == "residue" else scale
@@ -224,3 +272,39 @@ def render_placeholder_boogart(path: Path, stage: str = "kitten", scale: int = 8
                 pixels.extend([PALETTE[cell]] * actual_scale)
 
     write_rgba_png(path, width, height, pixels, text_chunks=metadata)
+
+
+def apply_visual_blood(sprite: list[str], stage: str) -> list[str]:
+    level = visual_stage_level(stage)
+    if level <= 0:
+        return sprite
+
+    if "_bloody" in stage:
+        coords = [
+            (8, 7), (11, 4), (11, 11),
+        ]
+        if level >= 2:
+            coords.extend([(9, 7), (12, 4), (12, 11), (13, 4), (13, 11)])
+        if level >= 3:
+            coords.extend([(10, 6), (10, 8), (12, 5), (12, 10), (13, 5), (13, 10)])
+        return paint(sprite, coords)
+
+    if "_bite" in stage:
+        coords = [
+            (8, 7), (8, 8), (9, 7),
+        ]
+        if level >= 2:
+            coords.extend([(7, 6), (7, 7), (9, 8), (10, 7), (10, 8)])
+        if level >= 3:
+            coords.extend([(6, 8), (8, 6), (9, 6), (11, 7), (11, 8)])
+        return paint(sprite, coords)
+
+    return sprite
+
+
+def paint(sprite: list[str], coords: list[tuple[int, int]]) -> list[str]:
+    rows = [list(row) for row in sprite]
+    for y, x in coords:
+        if 0 <= y < len(rows) and 0 <= x < len(rows[y]):
+            rows[y][x] = "B"
+    return ["".join(row) for row in rows]

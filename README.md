@@ -42,6 +42,55 @@ Every live Boogart PNG carries `tEXt` metadata:
 
 Body detection only accepts metadata marked as a real body. Residue, nest artifacts, and dead bodies are marked so they cannot be mistaken for the live creature during recovery or copy reactions.
 
+## Sprite Asset Contract
+
+Boogart works with placeholder fallbacks, but Steam art should provide these transparent PNGs in `boogart/rendering/assets/`:
+
+Living bodies:
+
+- `kitten.png`
+- `cat.png`
+- `shifting.png`
+- `wrong.png`
+- `corrupt.png`
+- `final.png`
+
+Bloody living bodies after corpse bites:
+
+- `kitten_bloody1.png`, `kitten_bloody2.png`, `kitten_bloody3.png`
+- `cat_bloody1.png`, `cat_bloody2.png`, `cat_bloody3.png`
+- `shifting_bloody1.png`, `shifting_bloody2.png`, `shifting_bloody3.png`
+- `wrong_bloody1.png`, `wrong_bloody2.png`, `wrong_bloody3.png`
+- `corrupt_bloody1.png`, `corrupt_bloody2.png`, `corrupt_bloody3.png`
+- `final_bloody1.png`, `final_bloody2.png`, `final_bloody3.png`
+
+Dead bodies:
+
+- `kitten_dead.png`
+- `cat_dead.png`
+- `shifting_dead.png`
+- `wrong_dead.png`
+- `corrupt_dead.png`
+- `final_dead.png`
+- `husk.png`
+
+Bitten dead bodies:
+
+- `kitten_dead_bite1.png`, `kitten_dead_bite2.png`, `kitten_dead_bite3.png`
+- `cat_dead_bite1.png`, `cat_dead_bite2.png`, `cat_dead_bite3.png`
+- `shifting_dead_bite1.png`, `shifting_dead_bite2.png`, `shifting_dead_bite3.png`
+- `wrong_dead_bite1.png`, `wrong_dead_bite2.png`, `wrong_dead_bite3.png`
+- `corrupt_dead_bite1.png`, `corrupt_dead_bite2.png`, `corrupt_dead_bite3.png`
+- `final_dead_bite1.png`, `final_dead_bite2.png`, `final_dead_bite3.png`
+- `husk_bite1.png`, `husk_bite2.png`, `husk_bite3.png`
+
+Residue:
+
+- `bone.png`
+- optional future variants: `crumbs.png`, `dust.png`
+
+All body sprites should share the same canvas size and alignment. Recommended source size is `512x512`; `256x256` is acceptable. Do not add identity metadata to source art files; Boogart writes runtime metadata when it renders the player-facing PNG.
+
 ## Run Locally
 
 ```bash

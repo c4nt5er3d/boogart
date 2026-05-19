@@ -46,7 +46,10 @@ Starvation death rules:
 ## Feeding
 
 - `.food` lowers hunger by `55`.
-- Old corpses lower hunger by `80`.
+- Old corpses lower hunger by `80` total across three bites.
+- Bite one and bite two leave the corpse in place with bloodier body art and `corpse_bites` metadata.
+- Bite three removes the corpse.
+- Each corpse bite increases the live Boogart's bloody mouth/paw visual state up to `bloody3`.
 - The most recent corpse is never immediately edible.
 - Meals can produce rare comforting logs or residue.
 
@@ -75,6 +78,8 @@ Live bodies carry PNG `tEXt` metadata:
 - `not_body=false`
 
 Artifacts use `not_body=true` and must never be treated as the live creature.
+
+Corpse PNGs use `boogart_artifact=corpse`, `not_body=true`, and `corpse_bites=0..2` while partially eaten. The live body keeps `stage` as the growth stage and uses `visual_state` plus `blood_level` for bloodied variants, so metadata recovery still sees it as the real body.
 
 ## Filesystem Boundaries
 

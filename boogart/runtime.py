@@ -31,6 +31,8 @@ STARVATION_DEATH_COOLDOWN_ACTIVE_MINUTES = 7 * 24 * 60
 MAX_ACTIVE_DELTA_MINUTES = 60
 FOOD_HUNGER_REDUCTION = 55
 CORPSE_HUNGER_REDUCTION = 80
+CORPSE_BITE_COUNT = 3
+MAX_CANNIBAL_BLOOD_LEVEL = 3
 MAX_BURROWS_TOTAL = 48
 MAX_BURROWS_PER_DAY = 1
 MAX_NEST_ARTIFACTS_TOTAL = 120
@@ -482,25 +484,14 @@ def eat_food(frame: HeartbeatFrame) -> None:
         corpses = [corpse for corpse in iter_corpses(roaming_roots(frame.paths)) if can_eat_corpse(frame, corpse)]
         if corpses:
             corpse = corpses[0]
-            # Polish: Slow bite (Notice first heartbeat, eat second)
             target_str = str(corpse)
             if frame.state.memory.get("food_target") != target_str:
                 frame.state.memory["food_target"] = target_str
                 note(frame, "found something.")
                 return
 
-            try:
-                corpse.unlink()
-                frame.state.hunger = max(0, frame.state.hunger - CORPSE_HUNGER_REDUCTION)
-                frame.state.affection += 2
-                clear_starvation(frame)
-                note(frame, corpse_eating_line(frame))
-                frame.events.append(f"ate_corpse:{corpse.name}")
-                frame.state.memory["corpse_bites"] = int(frame.state.memory.get("corpse_bites", 0) or 0) + 1
-                frame.state.memory.pop("food_target", None)
-                continue
-            except OSError:
-                pass
+            if bite_corpse(frame, corpse):
+                return
 
         foods = list(iter_food(roaming_roots(frame.paths)))
         if not foods:
@@ -546,6 +537,92 @@ def eat_food(frame: HeartbeatFrame) -> None:
             frame.events.append(f"ate:{food.name}")
         except OSError:
             break
+
+
+def bite_corpse(frame: HeartbeatFrame, corpse: Path) -> bool:
+    current_bites = corpse_bite_count(frame, corpse)
+    next_bite = min(CORPSE_BITE_COUNT, current_bites + 1)
+    frame.state.hunger = max(0, frame.state.hunger - corpse_bite_hunger_reduction(next_bite))
+    frame.state.affection += 2 if next_bite == CORPSE_BITE_COUNT else 1
+    clear_starvation(frame)
+    mark_cannibal_blood(frame)
+    frame.state.memory["corpse_bites"] = int(frame.state.memory.get("corpse_bites", 0) or 0) + 1
+
+    if next_bite < CORPSE_BITE_COUNT:
+        set_corpse_bite_count(frame, corpse, next_bite)
+        render_bitten_corpse(frame, corpse, next_bite)
+        note(frame, corpse_bite_line(frame, next_bite))
+        frame.events.append(f"bit_corpse:{corpse.name}:{next_bite}/{CORPSE_BITE_COUNT}")
+        return True
+
+    try:
+        corpse.unlink()
+    except OSError:
+        return False
+    set_corpse_bite_count(frame, corpse, 0)
+    note(frame, corpse_eating_line(frame))
+    frame.events.append(f"ate_corpse:{corpse.name}")
+    frame.state.memory.pop("food_target", None)
+    return True
+
+
+def corpse_bite_hunger_reduction(bite: int) -> int:
+    base = CORPSE_HUNGER_REDUCTION // CORPSE_BITE_COUNT
+    if bite >= CORPSE_BITE_COUNT:
+        return base + (CORPSE_HUNGER_REDUCTION % CORPSE_BITE_COUNT)
+    return base
+
+
+def corpse_bite_count(frame: HeartbeatFrame, corpse: Path) -> int:
+    counts = corpse_bite_counts(frame)
+    stored = counts.get(str(corpse), 0)
+    metadata = read_png_metadata(corpse)
+    try:
+        metadata_bites = int(metadata.get("corpse_bites", "0") or 0)
+    except ValueError:
+        metadata_bites = 0
+    return max(0, min(CORPSE_BITE_COUNT - 1, max(stored, metadata_bites)))
+
+
+def corpse_bite_counts(frame: HeartbeatFrame) -> dict[str, int]:
+    raw = frame.state.memory.get("corpse_bite_counts", {})
+    if not isinstance(raw, dict):
+        return {}
+    counts: dict[str, int] = {}
+    for key, value in raw.items():
+        try:
+            counts[str(key)] = max(0, min(CORPSE_BITE_COUNT - 1, int(value or 0)))
+        except (TypeError, ValueError):
+            continue
+    return counts
+
+
+def set_corpse_bite_count(frame: HeartbeatFrame, corpse: Path, bites: int) -> None:
+    counts = corpse_bite_counts(frame)
+    key = str(corpse)
+    if bites <= 0:
+        counts.pop(key, None)
+    else:
+        counts[key] = max(0, min(CORPSE_BITE_COUNT - 1, bites))
+    frame.state.memory["corpse_bite_counts"] = counts
+
+
+def mark_cannibal_blood(frame: HeartbeatFrame) -> None:
+    current = int(frame.state.memory.get("cannibal_blood_level", 0) or 0)
+    frame.state.memory["cannibal_blood_level"] = min(MAX_CANNIBAL_BLOOD_LEVEL, current + 1)
+    frame.state.memory["cannibal_blooded_at"] = frame.now.isoformat(timespec="seconds")
+
+
+def render_bitten_corpse(frame: HeartbeatFrame, corpse: Path, bites: int) -> None:
+    existing_metadata = read_png_metadata(corpse)
+    base_stage = corpse_base_stage(existing_metadata)
+    visual_stage = f"{base_stage}_bite{bites}"
+    metadata = corpse_metadata(frame.state, base_stage, bites=bites, existing=existing_metadata, visual_stage=visual_stage)
+    try:
+        render_boogart_sprite(corpse, visual_stage, metadata=metadata)
+        remember_generated_file(frame.state, corpse)
+    except OSError as exc:
+        debug_log(frame.paths, "corpse_bite_render_failed", path=corpse, bites=bites, error=exc)
 
 
 def tick_hunger(frame: HeartbeatFrame) -> None:
@@ -720,14 +797,32 @@ def render_body(frame: HeartbeatFrame) -> None:
         debug_log(frame.paths, "render_body_skipped", reason="missing_body_path")
         return
     stage = stage_for_birth_time(frame.state.birth_time, frame.now, min(frame.state.affection // 3, 60)).id
+    visual_stage = live_visual_stage(frame, stage)
     metadata = body_metadata(frame.state, stage)
+    if visual_stage != stage:
+        metadata["visual_state"] = visual_stage
+        metadata["blood_level"] = str(cannibal_blood_level(frame))
     try:
-        render_boogart_sprite(frame.body_path, stage, metadata=metadata)
+        render_boogart_sprite(frame.body_path, visual_stage, metadata=metadata)
         frame.state.body_hash = file_hash(frame.body_path)
         remember_generated_file(frame.state, frame.body_path)
     except OSError:
         debug_log(frame.paths, "render_body_failed", path=frame.body_path)
-    debug_log(frame.paths, "render_body", path=frame.body_path, exists=frame.body_path.exists(), stage=stage, hash=frame.state.body_hash)
+    debug_log(frame.paths, "render_body", path=frame.body_path, exists=frame.body_path.exists(), stage=visual_stage, hash=frame.state.body_hash)
+
+
+def cannibal_blood_level(frame: HeartbeatFrame) -> int:
+    try:
+        return max(0, min(MAX_CANNIBAL_BLOOD_LEVEL, int(frame.state.memory.get("cannibal_blood_level", 0) or 0)))
+    except (TypeError, ValueError):
+        return 0
+
+
+def live_visual_stage(frame: HeartbeatFrame, stage: str) -> str:
+    blood_level = cannibal_blood_level(frame)
+    if blood_level <= 0:
+        return stage
+    return f"{stage}_bloody{blood_level}"
 
 
 def kill(frame: HeartbeatFrame, cause: str) -> None:
@@ -741,7 +836,7 @@ def kill(frame: HeartbeatFrame, cause: str) -> None:
     corpse_sprite = f"{stage_id}_dead"
 
     try:
-        render_boogart_sprite(corpse, corpse_sprite, metadata=body_metadata(frame.state, corpse_sprite))
+        render_boogart_sprite(corpse, corpse_sprite, metadata=corpse_metadata(frame.state, corpse_sprite))
         remember_generated_file(frame.state, corpse)
         if frame.body_path and frame.body_path.exists() and frame.body_path != corpse:
             try:
@@ -772,6 +867,8 @@ def respawn(frame: HeartbeatFrame) -> None:
     frame.state.hunger = 35
     frame.state.neglect = 0
     clear_starvation(frame)
+    frame.state.memory.pop("cannibal_blood_level", None)
+    frame.state.memory.pop("cannibal_blooded_at", None)
     frame.state.memory.pop("died_at", None)
     frame.state.memory.pop("death_cause", None)
 
@@ -803,7 +900,7 @@ def maintain_husk(frame: HeartbeatFrame) -> None:
     if not corpse.exists():
         # Fallback to stage-specific dead sprite if recreated
         stage_id = stage_for_birth_time(frame.state.birth_time, frame.now, min(frame.state.affection // 3, 60)).id
-        render_boogart_sprite(corpse, f"{stage_id}_dead", metadata=body_metadata(frame.state, f"{stage_id}_dead"))
+        render_boogart_sprite(corpse, f"{stage_id}_dead", metadata=corpse_metadata(frame.state, f"{stage_id}_dead"))
         remember_generated_file(frame.state, corpse)
 
 
@@ -1289,6 +1386,29 @@ def body_metadata(state: BoogartState, stage: str) -> dict[str, str]:
     }
 
 
+def corpse_metadata(
+    state: BoogartState,
+    stage: str,
+    bites: int = 0,
+    existing: dict[str, str] | None = None,
+    visual_stage: str | None = None,
+) -> dict[str, str]:
+    existing = existing or {}
+    base = body_metadata(state, stage)
+    metadata = {
+        key: str(existing.get(key) or value)
+        for key, value in base.items()
+    }
+    metadata["stage"] = corpse_base_stage({"stage": stage})
+    metadata["boogart_artifact"] = "corpse"
+    metadata["artifact_kind"] = "corpse"
+    metadata["not_body"] = "true"
+    metadata["corpse_bites"] = str(max(0, min(CORPSE_BITE_COUNT, bites)))
+    if visual_stage:
+        metadata["visual_state"] = visual_stage
+    return metadata
+
+
 def artifact_metadata(state: BoogartState, stage: str, kind: str) -> dict[str, str]:
     metadata = body_metadata(state, stage)
     metadata["boogart_artifact"] = kind
@@ -1305,6 +1425,14 @@ def is_body_metadata(metadata: dict[str, str], state: BoogartState) -> bool:
     if metadata.get("boogart_artifact") not in {"", "body", None}:
         return False
     return metadata.get("stage") in set(STAGE_IDS)
+
+
+def corpse_base_stage(metadata: dict[str, str]) -> str:
+    stage = str(metadata.get("stage") or metadata.get("visual_state") or "kitten_dead")
+    if "_bite" in stage:
+        stage = stage.split("_bite", 1)[0]
+    valid = {f"{stage_id}_dead" for stage_id in STAGE_IDS} | {"husk"}
+    return stage if stage in valid else "kitten_dead"
 
 
 def file_hash(path: Path) -> str:
@@ -1382,12 +1510,18 @@ def can_eat_corpse(frame: HeartbeatFrame, corpse: Path) -> bool:
 
 def corpse_eating_line(frame: HeartbeatFrame) -> str:
     bites = int(frame.state.memory.get("corpse_bites", 0) or 0)
-    if bites == 0:
+    if bites <= 3:
+        return "the last piece went quiet."
+    if bites <= 6:
+        return "less of me left to find."
+    return "the old body is gone now."
+
+
+def corpse_bite_line(frame: HeartbeatFrame, bite: int) -> str:
+    if bite == 1:
         return "reclaiming a lost day."
-    if bites == 1:
+    if bite == 2:
         return "it tasted like a memory."
-    if bites == 2:
-        return "the echoes are quieter now."
     return "less of me left to find."
 
 
