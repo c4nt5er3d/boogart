@@ -3,7 +3,7 @@
 from pathlib import Path
 from PyInstaller.utils.hooks import collect_data_files
 
-ROOT = Path(__file__).resolve().parents[1]
+ROOT = Path(SPECPATH).resolve().parent
 DATAS = collect_data_files("boogart.rendering", includes=["assets/*.png"])
 
 
