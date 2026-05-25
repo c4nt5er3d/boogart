@@ -138,11 +138,24 @@ def main(argv: list[str] | None = None) -> None:
             run_watch_heartbeat_loop(paths, config)
 
 
+def tk_runtime_safe() -> bool:
+    if sys.platform != "darwin":
+        return True
+    executable = Path(sys.executable).as_posix()
+    base_prefix = Path(sys.base_prefix).as_posix()
+    apple_python = executable == "/usr/bin/python3" or "CommandLineTools" in executable or "CommandLineTools" in base_prefix
+    return not (sys.version_info < (3, 11) and apple_python)
+
+
 def run_setup_terminal(paths: BoogartPaths | None = None) -> None:
     target_paths = paths or BoogartPaths.discover()
 
     def complete(username: str) -> object:
         return install_boogart(username, target_paths)
+
+    if not tk_runtime_safe():
+        ConsoleSetupTerminal(on_complete=complete).run()
+        return
 
     try:
         terminal = SetupTerminal(on_complete=complete)
@@ -154,6 +167,10 @@ def run_setup_terminal(paths: BoogartPaths | None = None) -> None:
 def run_heartbeat_loop(paths: BoogartPaths, config: RuntimeConfig | None = None) -> None:
     runtime_config = config or RuntimeConfig.from_env()
     interval_seconds = 2 if runtime_config.dev_fast else HEARTBEAT_SECONDS
+
+    if not tk_runtime_safe():
+        run_sleep_heartbeat_loop(paths, runtime_config, interval_seconds)
+        return
 
     try:
         import tkinter as tk
@@ -167,13 +184,17 @@ def run_heartbeat_loop(paths: BoogartPaths, config: RuntimeConfig | None = None)
         pulse()
         root.mainloop()
     except (ModuleNotFoundError, tk.TclError) if "tk" in locals() else ModuleNotFoundError:
-        import time
-        try:
-            while True:
-                heartbeat(paths, config=runtime_config)
-                time.sleep(interval_seconds)
-        except KeyboardInterrupt:
-            print("\nstopping boogart.")
+        run_sleep_heartbeat_loop(paths, runtime_config, interval_seconds)
+
+
+def run_sleep_heartbeat_loop(paths: BoogartPaths, config: RuntimeConfig, interval_seconds: int) -> None:
+    import time
+    try:
+        while True:
+            heartbeat(paths, config=config)
+            time.sleep(interval_seconds)
+    except KeyboardInterrupt:
+        print("\nstopping boogart.")
 
 
 def run_live_heartbeat_loop(paths: BoogartPaths, config: RuntimeConfig | None = None) -> None:
@@ -195,6 +216,11 @@ def run_live_heartbeat_loop(paths: BoogartPaths, config: RuntimeConfig | None = 
 
 
 def run_watch_heartbeat_loop(paths: BoogartPaths, config: RuntimeConfig | None = None) -> None:
+    if not tk_runtime_safe():
+        print("Boogart watch needs a newer Tk runtime; falling back to background mode.")
+        run_heartbeat_loop(paths, config)
+        return
+
     try:
         from boogart.ui.watch import WatchUnavailableError, run_watch_window
 

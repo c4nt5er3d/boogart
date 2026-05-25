@@ -7,7 +7,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from unittest.mock import patch
 
-from boogart.app import boogart_lock, install_boogart, run_watch_heartbeat_loop
+from boogart.app import boogart_lock, install_boogart, run_watch_heartbeat_loop, tk_runtime_safe
 from boogart.cleanup import cleanup
 from boogart.core.debug import debug_status
 from boogart.core.paths import BoogartPaths
@@ -1105,12 +1105,31 @@ class GddRuntimeTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             paths = make_paths(Path(tmp))
             with (
+                patch("boogart.app.tk_runtime_safe", return_value=True),
                 patch("boogart.ui.watch.run_watch_window", side_effect=WatchUnavailableError("no display")),
                 patch("boogart.app.run_heartbeat_loop") as background,
             ):
                 run_watch_heartbeat_loop(paths, RuntimeConfig(dev_fast=True))
 
             background.assert_called_once()
+
+    def test_macos_command_line_tools_python_skips_tk_runtime(self) -> None:
+        with (
+            patch("boogart.app.sys.platform", "darwin"),
+            patch("boogart.app.sys.executable", "/Library/Developer/CommandLineTools/usr/bin/python3"),
+            patch("boogart.app.sys.base_prefix", "/Library/Developer/CommandLineTools/Library/Frameworks/Python3.framework/Versions/3.9"),
+            patch("boogart.app.sys.version_info", (3, 9, 6)),
+        ):
+            self.assertFalse(tk_runtime_safe())
+
+    def test_windows_python_keeps_tk_runtime_available(self) -> None:
+        with (
+            patch("boogart.app.sys.platform", "win32"),
+            patch("boogart.app.sys.executable", "C:/Users/USER/AppData/Local/Programs/Python/Python311/python.exe"),
+            patch("boogart.app.sys.base_prefix", "C:/Users/USER/AppData/Local/Programs/Python/Python311"),
+            patch("boogart.app.sys.version_info", (3, 11, 9)),
+        ):
+            self.assertTrue(tk_runtime_safe())
 
     def test_hundred_day_no_feed_simulation_limits_starvation_and_files(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
