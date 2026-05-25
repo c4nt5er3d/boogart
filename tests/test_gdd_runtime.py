@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import tempfile
 import unittest
+import io
 import os
+from contextlib import redirect_stdout
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from unittest.mock import patch
@@ -1101,15 +1103,31 @@ class GddRuntimeTests(unittest.TestCase):
 
             popen.assert_called_once_with(["open", str(folder)])
 
-    def test_watch_window_falls_back_to_background_loop_if_unavailable(self) -> None:
+    def test_watch_window_falls_back_to_live_panel_if_unavailable_in_terminal(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             paths = make_paths(Path(tmp))
             with (
                 patch("boogart.app.tk_runtime_safe", return_value=True),
                 patch("boogart.ui.watch.run_watch_window", side_effect=WatchUnavailableError("no display")),
+                patch("boogart.app.stdout_interactive", return_value=True),
+                patch("boogart.app.run_live_heartbeat_loop") as live,
+            ):
+                with redirect_stdout(io.StringIO()):
+                    run_watch_heartbeat_loop(paths, RuntimeConfig(dev_fast=True))
+
+            live.assert_called_once()
+
+    def test_watch_window_falls_back_to_background_loop_if_unavailable_without_terminal(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            paths = make_paths(Path(tmp))
+            with (
+                patch("boogart.app.tk_runtime_safe", return_value=True),
+                patch("boogart.ui.watch.run_watch_window", side_effect=WatchUnavailableError("no display")),
+                patch("boogart.app.stdout_interactive", return_value=False),
                 patch("boogart.app.run_heartbeat_loop") as background,
             ):
-                run_watch_heartbeat_loop(paths, RuntimeConfig(dev_fast=True))
+                with redirect_stdout(io.StringIO()):
+                    run_watch_heartbeat_loop(paths, RuntimeConfig(dev_fast=True))
 
             background.assert_called_once()
 

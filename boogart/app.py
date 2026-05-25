@@ -217,16 +217,30 @@ def run_live_heartbeat_loop(paths: BoogartPaths, config: RuntimeConfig | None = 
 
 def run_watch_heartbeat_loop(paths: BoogartPaths, config: RuntimeConfig | None = None) -> None:
     if not tk_runtime_safe():
-        print("Boogart watch needs a newer Tk runtime; falling back to background mode.")
-        run_heartbeat_loop(paths, config)
+        run_watch_fallback_loop(paths, config, "Apple system Python has a broken Tk runtime")
         return
 
     try:
         from boogart.ui.watch import WatchUnavailableError, run_watch_window
 
         run_watch_window(paths, config or RuntimeConfig.from_env())
-    except WatchUnavailableError:
+    except WatchUnavailableError as exc:
+        run_watch_fallback_loop(paths, config, str(exc))
+
+
+def run_watch_fallback_loop(paths: BoogartPaths, config: RuntimeConfig | None, reason: str) -> None:
+    clean_reason = reason.rstrip(".")
+    print(f"Boogart watch unavailable: {clean_reason}.")
+    if stdout_interactive():
+        print("Falling back to live terminal panel.")
+        run_live_heartbeat_loop(paths, config)
+    else:
+        print("Falling back to background mode.")
         run_heartbeat_loop(paths, config)
+
+
+def stdout_interactive() -> bool:
+    return bool(getattr(sys.stdout, "isatty", lambda: False)())
 
 
 @contextmanager
