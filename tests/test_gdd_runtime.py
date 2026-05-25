@@ -7,6 +7,7 @@ import os
 from contextlib import redirect_stdout
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import patch
 
 from boogart.app import boogart_lock, install_boogart, run_watch_heartbeat_loop, tk_runtime_safe
@@ -16,9 +17,9 @@ from boogart.core.paths import BoogartPaths
 from boogart.core.state import BoogartState, load_state, save_state, state_from_dict
 from boogart.rendering.png import read_png_metadata
 from boogart.rendering.sprite import render_boogart_sprite
-from boogart.runtime import HeartbeatFrame, RuntimeConfig, artifact_metadata, body_metadata, corpse_metadata, movement_candidates, run_heartbeat, run_simulation
+from boogart.runtime import HeartbeatFrame, RuntimeConfig, artifact_metadata, body_metadata, call_boogart, corpse_metadata, movement_candidates, pet_boogart, run_heartbeat, run_simulation
 from boogart.ui.terminal import render_live_panel
-from boogart.ui.watch import WatchUnavailableError, open_folder
+from boogart.ui.watch import BoogartWatchWindow, WatchUnavailableError, open_folder
 
 
 class GddRuntimeTests(unittest.TestCase):
@@ -279,6 +280,9 @@ class GddRuntimeTests(unittest.TestCase):
 
             self.assertIn("BOOGART LIVE", panel)
             self.assertIn("hunger:", panel)
+            self.assertIn("place:", panel)
+            self.assertNotIn("wrongness", panel)
+            self.assertNotIn("motion:", panel)
             self.assertIn("08:01", panel)
             self.assertIn("left hair.txt", panel)
 
@@ -579,6 +583,7 @@ class GddRuntimeTests(unittest.TestCase):
             paths.desktop.mkdir(parents=True)
             paths.data_dir.mkdir()
             state = BoogartState.new("jay")
+            state.birth_time = (now - timedelta(days=3)).isoformat(timespec="seconds")
             state.current_folder = str(paths.desktop)
             state.next_move_at = (now + timedelta(hours=1)).isoformat(timespec="seconds")
             state.next_hunger_at = (now + timedelta(hours=1)).isoformat(timespec="seconds")
@@ -637,7 +642,7 @@ class GddRuntimeTests(unittest.TestCase):
             self.assertIn("archived:boogart.zip", archived.events)
             self.assertNotIn("dead:deleted", archived.events)
             self.assertIn("age: folded", panel)
-            self.assertIn("mood: muffled", panel)
+            self.assertIn("mood: bundled up", panel)
 
             render_boogart_sprite(paths.desktop_boogart_png, "kitten", metadata=body_metadata(archived_state, "kitten"))
             recovered = run_heartbeat(paths, now + timedelta(minutes=1), RuntimeConfig(dev_fast=True))
@@ -790,7 +795,7 @@ class GddRuntimeTests(unittest.TestCase):
             self.assertEqual(saved.body_name, "boogart.png")
             self.assertNotIn("ate_corpse:boogart_dead.png", frame.events)
 
-    def test_old_corpse_takes_three_bites_and_bloodies_live_body(self) -> None:
+    def test_old_corpse_takes_three_bites_without_changing_live_body_sprite(self) -> None:
         now = datetime(2026, 1, 1, tzinfo=timezone.utc)
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -826,8 +831,8 @@ class GddRuntimeTests(unittest.TestCase):
             self.assertEqual(after_one["visual_state"], "kitten_dead_bite1")
             self.assertEqual(after_one["generation"], "1")
             self.assertEqual(live_after_one["stage"], "kitten")
-            self.assertEqual(live_after_one["visual_state"], "kitten_bloody1")
-            self.assertEqual(live_after_one["blood_level"], "1")
+            self.assertNotIn("visual_state", live_after_one)
+            self.assertNotIn("blood_level", live_after_one)
             self.assertIn("bit_corpse:boogart_dead.png:2/3", bite_two.events)
             self.assertEqual(after_two["corpse_bites"], "2")
             self.assertEqual(after_two["visual_state"], "kitten_dead_bite2")
@@ -837,8 +842,8 @@ class GddRuntimeTests(unittest.TestCase):
             self.assertEqual(saved.memory["corpse_bites"], 3)
             self.assertEqual(saved.memory["cannibal_blood_level"], 3)
             self.assertEqual(live_after_final["stage"], "kitten")
-            self.assertEqual(live_after_final["visual_state"], "kitten_bloody3")
-            self.assertEqual(live_after_final["blood_level"], "3")
+            self.assertNotIn("visual_state", live_after_final)
+            self.assertNotIn("blood_level", live_after_final)
 
     def test_partial_corpse_bite_state_survives_restart_from_metadata(self) -> None:
         now = datetime(2026, 1, 1, tzinfo=timezone.utc)
@@ -970,7 +975,7 @@ class GddRuntimeTests(unittest.TestCase):
             self.assertTrue(any(event.startswith("ate:first.food") for event in events))
             self.assertTrue(paths.log_file.exists())
 
-    def test_pose_update_changes_visual_metadata_without_extra_desktop_files(self) -> None:
+    def test_heartbeat_keeps_live_png_static_without_pose_events(self) -> None:
         now = datetime(2026, 1, 1, tzinfo=timezone.utc)
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -981,6 +986,7 @@ class GddRuntimeTests(unittest.TestCase):
             state.current_folder = str(paths.desktop)
             state.next_move_at = (now + timedelta(hours=1)).isoformat(timespec="seconds")
             state.next_hunger_at = (now + timedelta(hours=1)).isoformat(timespec="seconds")
+            state.next_txt_at = (now + timedelta(hours=1)).isoformat(timespec="seconds")
             state.memory["visual_pose"] = "idle1"
             render_boogart_sprite(paths.desktop_boogart_png, "kitten_idle1", metadata=body_metadata(state, "kitten"))
             save_state(paths.state_file, state)
@@ -988,10 +994,30 @@ class GddRuntimeTests(unittest.TestCase):
             frame = run_heartbeat(paths, now)
             metadata = read_png_metadata(paths.desktop_boogart_png)
 
-            self.assertTrue(any(event.startswith("pose:") for event in frame.events))
+            self.assertFalse(any(event.startswith("pose:") for event in frame.events))
             self.assertEqual(metadata["stage"], "kitten")
-            self.assertIn(metadata["motion"], {"idle2", "blink", "look", "curl", "sleep"})
+            self.assertNotIn("motion", metadata)
+            self.assertNotIn("visual_state", metadata)
             self.assertEqual(sorted(path.name for path in paths.desktop.iterdir()), ["boogart.png"])
+
+    def test_live_body_still_updates_for_growth_stage(self) -> None:
+        now = datetime(2026, 1, 4, tzinfo=timezone.utc)
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            paths = make_paths(root)
+            install_boogart("jay", paths)
+            state = load_state(paths.state_file)
+            state.birth_time = (now - timedelta(days=3)).isoformat(timespec="seconds")
+            state.next_move_at = (now + timedelta(hours=1)).isoformat(timespec="seconds")
+            state.next_hunger_at = (now + timedelta(hours=1)).isoformat(timespec="seconds")
+            state.next_txt_at = (now + timedelta(hours=1)).isoformat(timespec="seconds")
+            save_state(paths.state_file, state)
+
+            run_heartbeat(paths, now)
+            metadata = read_png_metadata(paths.desktop_boogart_png)
+
+            self.assertEqual(metadata["stage"], "cat")
+            self.assertNotIn("motion", metadata)
 
     def test_first_visible_move_is_scheduled_in_steam_hook_window(self) -> None:
         now = datetime(2026, 1, 1, tzinfo=timezone.utc)
@@ -1103,6 +1129,67 @@ class GddRuntimeTests(unittest.TestCase):
 
             popen.assert_called_once_with(["open", str(folder)])
 
+    def test_pet_action_updates_affection_without_extra_files(self) -> None:
+        now = datetime(2026, 1, 1, tzinfo=timezone.utc)
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            paths = make_paths(root)
+            install_boogart("jay", paths)
+            before_files = sorted(path.relative_to(root) for path in root.rglob("*") if path.is_file())
+
+            result = pet_boogart(paths, now)
+            saved = load_state(paths.state_file)
+            after_files = sorted(path.relative_to(root) for path in root.rglob("*") if path.is_file())
+
+            self.assertIn("pet:soft", result.events)
+            self.assertEqual(saved.affection, 1)
+            self.assertEqual(before_files, after_files)
+
+    def test_call_action_answers_next_heartbeat_without_extra_files(self) -> None:
+        now = datetime(2026, 1, 1, tzinfo=timezone.utc)
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            paths = make_paths(root)
+            install_boogart("jay", paths)
+            state = load_state(paths.state_file)
+            state.next_move_at = (now + timedelta(hours=1)).isoformat(timespec="seconds")
+            state.next_hunger_at = (now + timedelta(hours=1)).isoformat(timespec="seconds")
+            state.next_txt_at = (now + timedelta(hours=1)).isoformat(timespec="seconds")
+            save_state(paths.state_file, state)
+            before_files = sorted(path.relative_to(root) for path in root.rglob("*") if path.is_file())
+
+            result = call_boogart(paths, now)
+            called = load_state(paths.state_file)
+            frame = run_heartbeat(paths, now + timedelta(minutes=1))
+            after_files = sorted(path.relative_to(root) for path in root.rglob("*") if path.is_file())
+
+            self.assertIn("call:heard", result.events)
+            self.assertTrue(called.memory.get("call_pending"))
+            self.assertIn("call:heard", frame.events)
+            self.assertFalse(load_state(paths.state_file).memory.get("call_pending"))
+            self.assertEqual(before_files, after_files)
+
+    def test_pyside_watch_window_instantiates_with_mocked_qt(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            paths = make_paths(Path(tmp))
+            install_boogart("jay", paths)
+            window = BoogartWatchWindow(
+                paths,
+                RuntimeConfig(dev_fast=True),
+                qt_modules=fake_qt_modules(),
+                app=FakeApplication(),
+            )
+
+            self.assertEqual(window.window.title, "Boogart")
+            self.assertEqual(window.hunger_bar.minimum, 0)
+            self.assertEqual(window.hunger_bar.maximum, 100)
+            window.toggle_pause()
+            self.assertTrue(window.paused)
+            self.assertEqual(window.pause_button.text, "Resume")
+            window.quit()
+            self.assertTrue(window.window.closed)
+            self.assertTrue(window.app.quit_called)
+
     def test_watch_window_falls_back_to_live_panel_if_unavailable_in_terminal(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             paths = make_paths(Path(tmp))
@@ -1191,6 +1278,113 @@ class GddRuntimeTests(unittest.TestCase):
             self.assertEqual(saved.lifecycle, "alive")
             self.assertEqual(saved.death_count, 0)
             self.assertLess(file_count, 250)
+
+
+class FakeSignal:
+    def __init__(self) -> None:
+        self.callback = None
+
+    def connect(self, callback) -> None:
+        self.callback = callback
+
+
+class FakeWidget:
+    def __init__(self, *args, **kwargs) -> None:
+        self.args = args
+        self.kwargs = kwargs
+        self.clicked = FakeSignal()
+        self.timeout = FakeSignal()
+        self.text = ""
+        self.plain_text = ""
+        self.value = 0
+        self.minimum = None
+        self.maximum = None
+        self.title = ""
+        self.closed = False
+
+    def setWindowTitle(self, value: str) -> None:
+        self.title = value
+
+    def windowFlags(self) -> int:
+        return 0
+
+    def setRange(self, minimum: int, maximum: int) -> None:
+        self.minimum = minimum
+        self.maximum = maximum
+
+    def setValue(self, value: int) -> None:
+        self.value = value
+
+    def setText(self, value: str) -> None:
+        self.text = value
+
+    def setPlainText(self, value: str) -> None:
+        self.plain_text = value
+
+    def close(self) -> None:
+        self.closed = True
+
+    def size(self):
+        return self
+
+    def scaled(self, *args, **kwargs):
+        return self
+
+    def isNull(self) -> bool:
+        return False
+
+    def exec(self) -> int:
+        return 0
+
+    def __getattr__(self, _name):
+        def method(*args, **kwargs):
+            return None
+
+        return method
+
+
+class FakeApplication(FakeWidget):
+    @classmethod
+    def instance(cls):
+        return None
+
+    def __init__(self, *args, **kwargs) -> None:
+        super().__init__(*args, **kwargs)
+        self.quit_called = False
+
+    def quit(self) -> None:
+        self.quit_called = True
+
+
+class FakeQt:
+    AlignCenter = 0
+    WindowStaysOnTopHint = 1
+    KeepAspectRatio = 0
+    SmoothTransformation = 0
+    AlignmentFlag = SimpleNamespace(AlignCenter=0)
+    WindowType = SimpleNamespace(WindowStaysOnTopHint=1)
+    AspectRatioMode = SimpleNamespace(KeepAspectRatio=0)
+    TransformationMode = SimpleNamespace(SmoothTransformation=0)
+
+
+class FakePixmap(FakeWidget):
+    pass
+
+
+def fake_qt_modules():
+    core = SimpleNamespace(Qt=FakeQt, QTimer=FakeWidget)
+    gui = SimpleNamespace(QPixmap=FakePixmap)
+    widgets = SimpleNamespace(
+        QApplication=FakeApplication,
+        QWidget=FakeWidget,
+        QLabel=FakeWidget,
+        QProgressBar=FakeWidget,
+        QTextEdit=FakeWidget,
+        QPushButton=FakeWidget,
+        QVBoxLayout=FakeWidget,
+        QHBoxLayout=FakeWidget,
+    )
+    return core, gui, widgets
 
 
 def make_paths(root: Path) -> BoogartPaths:

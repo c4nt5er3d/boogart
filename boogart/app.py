@@ -53,11 +53,8 @@ def install_boogart(username: str, paths: BoogartPaths | None = None) -> Boogart
         except OSError:
             pass
 
-    state.memory["visual_pose"] = "idle1"
     metadata = body_metadata(state, "kitten")
-    metadata["visual_state"] = "kitten_idle1"
-    metadata["motion"] = "idle1"
-    render_boogart_sprite(paths.desktop_boogart_png, "kitten_idle1", metadata=metadata)
+    render_boogart_sprite(paths.desktop_boogart_png, "kitten", metadata=metadata)
     debug_log(paths, "install_render_body", path=paths.desktop_boogart_png, exists=paths.desktop_boogart_png.exists(), hash=file_hash(paths.desktop_boogart_png))
     remember_generated_file(state, paths.desktop_boogart_png)
     state.body_hash = file_hash(paths.desktop_boogart_png)
@@ -216,10 +213,6 @@ def run_live_heartbeat_loop(paths: BoogartPaths, config: RuntimeConfig | None = 
 
 
 def run_watch_heartbeat_loop(paths: BoogartPaths, config: RuntimeConfig | None = None) -> None:
-    if not tk_runtime_safe():
-        run_watch_fallback_loop(paths, config, "Apple system Python has a broken Tk runtime")
-        return
-
     try:
         from boogart.ui.watch import WatchUnavailableError, run_watch_window
 

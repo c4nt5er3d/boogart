@@ -129,10 +129,9 @@ def render_live_panel(paths: BoogartPaths, state: BoogartState, events: list[str
     rows = [
         ("age", age_label(state, current_time)),
         ("mood", mood_label(state)),
-        ("motion", motion_label(state)),
+        ("place", place_label(state)),
         ("trust", meter(min(10, max(0, 3 + state.affection // 2)))),
         ("hunger", meter(round(state.hunger / 10))),
-        ("wrongness", meter(min(10, max(0, state.phase + state.death_count // 2)))),
     ]
     width = 32
     lines = ["┌─ BOOGART LIVE ────────────────┐"]
@@ -164,41 +163,30 @@ def age_label(state: BoogartState, now: datetime) -> str:
 
 def mood_label(state: BoogartState) -> str:
     if state.lifecycle == "dead":
-        return "quiet"
+        return "needs care"
     if state.lifecycle == "archived":
-        return "muffled"
+        return "bundled up"
     if state.hunger >= 100:
-        return "hollow"
+        return "very hungry"
     if state.hunger >= 90:
-        return "too polite"
+        return "waiting"
     if state.hunger >= 70:
-        return "pretending"
+        return "restless"
     if state.affection >= 6:
-        return "almost trusting"
-    if state.phase >= 5:
-        return "listening"
+        return "trusting"
+    if state.hunger >= 40:
+        return "sniffing around"
     return "curious"
 
 
-def motion_label(state: BoogartState) -> str:
+def place_label(state: BoogartState) -> str:
     if state.lifecycle == "dead":
-        return "still"
+        return "resting"
     if state.lifecycle == "archived":
-        return "folded"
-    pose = str(state.memory.get("visual_pose") or "idle1")
-    labels = {
-        "idle1": "breathing",
-        "idle2": "shifting",
-        "blink": "blinking",
-        "look": "watching",
-        "curl": "curled",
-        "sleep": "resting",
-        "stare": "too still",
-        "thin": "drawn thin",
-    }
+        return "packed"
     if state.memory.get("food_wait_until"):
-        return "watching food"
-    return labels.get(pose, "breathing")
+        return "near food"
+    return "nearby"
 
 
 def meter(value: int, width: int = 10) -> str:
@@ -227,18 +215,11 @@ def event_phrase(event: str) -> str:
     if event == "moved":
         return "found warm folder"
     if event == "impossible_moved":
-        return "went somewhere wrong"
-    if event.startswith("pose:"):
-        pose = event.split(":", 1)[1]
-        return {
-            "blink": "blinked when watched",
-            "idle2": "shifted in place",
-            "curl": "curled near cache",
-            "sleep": "rested in the pixels",
-            "look": "looked toward food",
-            "stare": "stared from the corner",
-            "thin": "looked smaller",
-        }.get(pose, "shifted in place")
+        return "found tucked-away folder"
+    if event.startswith("pet:"):
+        return "leaned closer"
+    if event.startswith("call:"):
+        return "heard you"
     if event.startswith("ate:"):
         return "ate offering"
     if event.startswith("food_waiting:"):
@@ -246,7 +227,7 @@ def event_phrase(event: str) -> str:
     if event.startswith("food_seen:"):
         return "found offering"
     if event.startswith("stray:"):
-        return f"left {event.split(':', 1)[1]}"
+        return "left something nearby"
     if event.startswith("txt:"):
         return f"left {event.split(':', 1)[1]}"
     if event.startswith("burrowed:"):
@@ -254,13 +235,13 @@ def event_phrase(event: str) -> str:
     if event.startswith("nested:"):
         return f"left {event.split(':', 1)[1]}"
     if event.startswith("archived:"):
-        return "folded into archive"
+        return "packed itself away"
     if event == "unarchived":
-        return "heard the zipper open"
+        return "came back out"
     if event.startswith("dead:starvation"):
-        return "went very still"
+        return "needs care"
     if event.startswith("respawned"):
-        return "blinked again"
+        return "came back close"
     return ""
 
 

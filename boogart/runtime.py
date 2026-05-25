@@ -43,13 +43,6 @@ MAX_BURROWS_TOTAL = 48
 MAX_BURROWS_PER_DAY = 1
 MAX_NEST_ARTIFACTS_TOTAL = 120
 MAX_GENERATED_FILES_TOTAL = 250
-POSE_IDS = ("idle1", "idle2", "blink", "look", "curl", "sleep", "stare", "thin")
-NORMAL_POSE_SECONDS = (20, 60)
-HUNGRY_POSE_SECONDS = (12, 30)
-DEV_FAST_POSE_SECONDS = (3, 8)
-FIRST_POSE_TARGET_COUNT = 2
-FIRST_POSE_VISIBILITY = timedelta(minutes=10)
-DEV_FAST_FIRST_POSE_VISIBILITY = timedelta(seconds=30)
 FIRST_STRAY_AFTER = timedelta(minutes=6)
 DEV_FAST_FIRST_STRAY_AFTER = timedelta(seconds=25)
 IMPOSSIBLE_PLACE_AFTER = timedelta(hours=4)
@@ -139,6 +132,13 @@ class SimulationResult:
     current_folder: str
 
 
+@dataclass
+class InteractionResult:
+    state: BoogartState
+    events: list[str]
+    now: datetime
+
+
 def heartbeat(paths: BoogartPaths, now: datetime | None = None, config: RuntimeConfig | None = None) -> str:
     frame = run_heartbeat(paths, now, config)
     return frame.events[-1] if frame.events else "idle"
@@ -182,7 +182,7 @@ def run_heartbeat(paths: BoogartPaths, now: datetime | None = None, config: Runt
         if frame.state.lifecycle == "alive":
             maintain_starvation(frame)
         if frame.state.lifecycle == "alive":
-            maybe_update_pose(frame)
+            maybe_answer_call(frame)
         if frame.state.lifecycle == "alive":
             if not maybe_impossible_place(frame):
                 maybe_move(frame)
@@ -224,6 +224,49 @@ def run_heartbeat(paths: BoogartPaths, now: datetime | None = None, config: Runt
         body_exists=frame.body_path.exists() if frame.body_path else False,
         events=",".join(frame.events) or "idle",
     )
+    return frame
+
+
+def pet_boogart(paths: BoogartPaths, now: datetime | None = None) -> InteractionResult:
+    frame = interaction_frame(paths, now)
+    if frame.state.lifecycle == "alive":
+        frame.state.affection = min(20, frame.state.affection + 1)
+        frame.state.memory["last_pet_at"] = frame.now.isoformat(timespec="seconds")
+        frame.events.append("pet:soft")
+        if not repeated_recently(frame, "pet_logged_at", days=1) and frame.state.log_count_today < MAX_LOGS_PER_DAY:
+            if write_log_line(frame, "you were warm."):
+                frame.state.log_count_today += 1
+                frame.state.memory["pet_logged_at"] = frame.now.isoformat(timespec="seconds")
+                remember_generated_file(frame.state, frame.paths.log_file)
+    else:
+        frame.events.append("pet:quiet")
+    stamp_activity(frame)
+    save_state(paths.state_file, frame.state)
+    return InteractionResult(state=frame.state, events=frame.events, now=frame.now)
+
+
+def call_boogart(paths: BoogartPaths, now: datetime | None = None) -> InteractionResult:
+    frame = interaction_frame(paths, now)
+    if frame.state.lifecycle == "alive":
+        frame.state.memory["call_pending"] = True
+        frame.state.memory["last_called_at"] = frame.now.isoformat(timespec="seconds")
+        frame.events.append("call:heard")
+    else:
+        frame.events.append("call:quiet")
+    stamp_activity(frame)
+    save_state(paths.state_file, frame.state)
+    return InteractionResult(state=frame.state, events=frame.events, now=frame.now)
+
+
+def interaction_frame(paths: BoogartPaths, now: datetime | None = None) -> HeartbeatFrame:
+    paths.ensure()
+    frame = HeartbeatFrame(
+        paths=paths,
+        now=now or datetime.now(timezone.utc),
+        state=load_state(paths.state_file),
+    )
+    reset_daily_caps(frame.state, frame.now)
+    reconcile_scope(frame)
     return frame
 
 
@@ -666,7 +709,6 @@ def eat_food(frame: HeartbeatFrame) -> None:
             frame.state.memory.pop("food_wait_until", None)
             frame.state.memory.pop("food_waiting_since", None)
             frame.state.memory["food_meals_total"] = int(frame.state.memory.get("food_meals_total", 0) or 0) + 1
-            frame.state.memory["comfort_pose_until"] = (frame.now + (timedelta(seconds=20) if frame.config.dev_fast else timedelta(minutes=10))).isoformat(timespec="seconds")
 
             # Polish: Feeding residue (crumbs/bones) as PNG
             if can_create_artifact(frame, "nest") and random_for(frame.state, f"residue-{food.name}").random() < 0.3:
@@ -828,64 +870,10 @@ def tick_hunger(frame: HeartbeatFrame) -> None:
             note(frame, line)
 
 
-def maybe_update_pose(frame: HeartbeatFrame) -> None:
-    if frame.state.lifecycle != "alive":
-        return
-    if frame.body_path and frame.body_path.is_symlink():
-        return
-
-    due_raw = frame.state.memory.get("next_pose_at")
-    first_window = boogart_age(frame) < first_pose_visibility(frame)
-    first_pose_count = int(frame.state.memory.get("first_pose_count", 0) or 0)
-    due = not due_raw or frame.now >= parse_timestamp(str(due_raw))
-    if first_window and first_pose_count < FIRST_POSE_TARGET_COUNT:
-        due = True
-    if not due:
-        return
-
-    pool = pose_pool(frame)
-    current = str(frame.state.memory.get("visual_pose") or "")
-    rng = random_for(frame.state, f"pose-{frame.now.isoformat(timespec='seconds')}")
-    choices = [pose for pose in pool if pose != current] or list(pool)
-    pose = rng.choice(choices)
-    frame.state.memory["visual_pose"] = pose
-    frame.state.memory["visual_pose_changed_at"] = frame.now.isoformat(timespec="seconds")
-    if first_window:
-        frame.state.memory["first_pose_count"] = first_pose_count + 1
-
-    if pose != current:
-        frame.events.append(f"pose:{pose}")
-    schedule_next_pose(frame)
-
-
-def pose_pool(frame: HeartbeatFrame) -> tuple[str, ...]:
-    comfort_until = frame.state.memory.get("comfort_pose_until")
-    if comfort_until and frame.now < parse_timestamp(str(comfort_until)):
-        return ("curl", "sleep", "blink", "idle2")
-    if frame.state.hunger >= 100:
-        return ("thin", "stare")
-    if frame.state.hunger >= 90:
-        return ("thin", "stare", "look")
-    if frame.state.hunger >= 70:
-        return ("look", "stare", "blink", "idle2")
-    if frame.state.hunger >= 40:
-        return ("look", "idle1", "idle2", "blink")
-    return ("idle1", "idle2", "blink", "curl", "sleep")
-
-
-def schedule_next_pose(frame: HeartbeatFrame) -> None:
-    if frame.config.dev_fast:
-        minimum, maximum = DEV_FAST_POSE_SECONDS
-    elif frame.state.hunger >= 70:
-        minimum, maximum = HUNGRY_POSE_SECONDS
-    else:
-        minimum, maximum = NORMAL_POSE_SECONDS
-    seconds = random_for(frame.state, f"pose-next-{frame.now.isoformat(timespec='seconds')}").randint(minimum, maximum)
-    frame.state.memory["next_pose_at"] = (frame.now + timedelta(seconds=seconds)).isoformat(timespec="seconds")
-
-
-def first_pose_visibility(frame: HeartbeatFrame) -> timedelta:
-    return DEV_FAST_FIRST_POSE_VISIBILITY if frame.config.dev_fast else FIRST_POSE_VISIBILITY
+def maybe_answer_call(frame: HeartbeatFrame) -> None:
+    if frame.state.memory.pop("call_pending", None):
+        frame.state.memory["last_call_answered_at"] = frame.now.isoformat(timespec="seconds")
+        frame.events.append("call:heard")
 
 
 def maybe_move(frame: HeartbeatFrame) -> None:
@@ -1143,10 +1131,10 @@ def render_body(frame: HeartbeatFrame) -> None:
     if visual_stage != stage:
         metadata["visual_state"] = visual_stage
         metadata["blood_level"] = str(cannibal_blood_level(frame))
-    elif frame.state.memory.get("visual_pose"):
-        metadata["visual_state"] = f"{stage}_{frame.state.memory['visual_pose']}"
-    if frame.state.memory.get("visual_pose"):
-        metadata["motion"] = str(frame.state.memory.get("visual_pose"))
+    if body_render_is_current(frame.body_path, metadata):
+        if not frame.state.body_hash:
+            frame.state.body_hash = file_hash(frame.body_path)
+        return
     try:
         render_boogart_sprite(frame.body_path, visual_stage, metadata=metadata)
         frame.state.body_hash = file_hash(frame.body_path)
@@ -1154,6 +1142,22 @@ def render_body(frame: HeartbeatFrame) -> None:
     except OSError:
         debug_log(frame.paths, "render_body_failed", path=frame.body_path)
     debug_log(frame.paths, "render_body", path=frame.body_path, exists=frame.body_path.exists(), stage=visual_stage, hash=frame.state.body_hash)
+
+
+def body_render_is_current(path: Path, metadata: dict[str, str]) -> bool:
+    if not path.exists() or path.is_symlink():
+        return False
+    current = read_png_metadata(path)
+    if not current:
+        return False
+    for key, value in metadata.items():
+        if current.get(key) != value:
+            return False
+    if "visual_state" not in metadata and current.get("visual_state"):
+        return False
+    if current.get("motion"):
+        return False
+    return True
 
 
 def cannibal_blood_level(frame: HeartbeatFrame) -> int:
@@ -1164,13 +1168,7 @@ def cannibal_blood_level(frame: HeartbeatFrame) -> int:
 
 
 def live_visual_stage(frame: HeartbeatFrame, stage: str) -> str:
-    blood_level = cannibal_blood_level(frame)
-    if blood_level <= 0:
-        pose = str(frame.state.memory.get("visual_pose") or "idle1")
-        if pose in POSE_IDS:
-            return f"{stage}_{pose}"
-        return stage
-    return f"{stage}_bloody{blood_level}"
+    return stage
 
 
 def kill(frame: HeartbeatFrame, cause: str) -> None:

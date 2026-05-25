@@ -12,16 +12,15 @@ The Steam promise is: a tiny file-pet that lives in your folders, accepts offeri
 ## Current Feature Set
 
 - First launch installs Boogart on the Desktop with a setup terminal.
-- The default run shows the Boogart Watch window: animated body preview, current folder, mood, hunger, recent events, `Pause`, `Open Current Folder`, terminal panel toggle, and `Quit`.
+- The default run shows the PySide6 Pet Monitor: body preview, current folder, cozy mood, hunger/trust meters, recent events, `Pet`, `Call`, `Open Folder`, `Pause`, and `Quit`.
 - `--background` keeps the old quiet daemon behavior for players who do not want a window.
-- Heartbeats update movement, hunger, logs, notes, body rendering, and visible pose changes.
-- `--live` shows a compact terminal panel with age, mood, trust, hunger, wrongness, and recent events.
+- Heartbeats update movement, hunger, logs, notes, and growth-stage body rendering.
+- `--live` shows a compact terminal panel with age, mood, place, trust, hunger, and recent events.
 - Boogart scans filenames only. He does not read file contents.
 - Movement is shallow, bounded, and biased toward Desktop/Downloads early so the first session stays legible.
 - The first visible folder move is scheduled in the first-session hook window, normally `8-20` active minutes after launch.
-- Idle poses make the live body visibly change in place: blink, look, curl, sleep, stare, thin, and breathing shifts.
 - Hunger uses a five-stage mood curve. Starvation death is active-time based, protected for the first two hours, and capped by cooldown.
-- Feeding with `.food` lowers hunger by `55`, clears starvation progress, can trigger a short comfort pose, and can leave small residue artifacts.
+- Feeding with `.food` lowers hunger by `55`, clears starvation progress, and can leave small residue artifacts.
 - The first feeding stays fast for demo clarity; later offerings can occasionally be watched for hours before Boogart eats them.
 - Old corpses can be eaten for a larger hunger reduction, but the most recent body is protected from immediate corpse eating.
 - Deleting the live body kills as `dead:deleted`; starvation kills as `dead:starvation`.
@@ -34,6 +33,7 @@ The Steam promise is: a tiny file-pet that lives in your folders, accepts offeri
 - Generated file churn is capped so long-running players do not get hundreds of artifacts.
 - A one-time stray artifact can appear beside Boogart as `second_body.png`; it carries matching identity metadata but is marked `not_body=true`, so it cannot be mistaken for the live creature.
 - Once per save, Boogart can make one safe unusual move into a deeper allowed folder and leave a longer log line.
+- The live `boogart.png` is intentionally simple: it changes by age/growth stage, not idle animation. Care feedback lives in the Pet Monitor and filesystem rituals.
 - Cleanup removes generated files, private state, lock files, debug logs, and the hidden tether.
 
 ## Metadata Contract
@@ -44,8 +44,6 @@ Every live Boogart PNG carries `tEXt` metadata:
 - `generation`
 - `birth_time`
 - `stage`
-- `visual_state`
-- `motion`
 - `lineage`
 - `parent_id`
 - `death_count`
@@ -53,7 +51,7 @@ Every live Boogart PNG carries `tEXt` metadata:
 - `boogart_artifact`
 - `not_body`
 
-Body detection only accepts metadata marked as a real body. Residue, nest artifacts, and dead bodies are marked so they cannot be mistaken for the live creature during recovery or copy reactions.
+Live body metadata stays stable between growth-stage changes. Corpse and artifact files may carry extra metadata such as `visual_state`, `artifact_kind`, or `corpse_bites`. Body detection only accepts metadata marked as a real body, so residue, nest artifacts, stray files, and dead bodies cannot be mistaken for the live creature during recovery or copy reactions.
 
 ## Sprite Asset Contract
 
@@ -68,27 +66,7 @@ Living bodies:
 - `corrupt.png`
 - `final.png`
 
-Living pose variants:
-
-- `{stage}_idle1.png`
-- `{stage}_idle2.png`
-- `{stage}_blink.png`
-- `{stage}_look.png`
-- `{stage}_curl.png`
-- `{stage}_sleep.png`
-- `{stage}_stare.png`
-- `{stage}_thin.png`
-
-Provide those for each living stage: `kitten`, `cat`, `shifting`, `wrong`, `corrupt`, and `final`. Boogart has procedural fallbacks for every pose, so final art can arrive gradually.
-
-Bloody living bodies after corpse bites:
-
-- `kitten_bloody1.png`, `kitten_bloody2.png`, `kitten_bloody3.png`
-- `cat_bloody1.png`, `cat_bloody2.png`, `cat_bloody3.png`
-- `shifting_bloody1.png`, `shifting_bloody2.png`, `shifting_bloody3.png`
-- `wrong_bloody1.png`, `wrong_bloody2.png`, `wrong_bloody3.png`
-- `corrupt_bloody1.png`, `corrupt_bloody2.png`, `corrupt_bloody3.png`
-- `final_bloody1.png`, `final_bloody2.png`, `final_bloody3.png`
+Living pose variants and bloody living variants are no longer required. The Pet Monitor provides moment-to-moment feedback while the live PNG stays readable as a stable filesystem body.
 
 Dead bodies:
 
@@ -195,8 +173,8 @@ Steam depot candidate:
 For public Windows downloads, use the GitHub Release workflow. Maintainers can publish by pushing a version tag:
 
 ```bash
-git tag v0.1.5
-git push origin v0.1.5
+git tag v0.1.6
+git push origin v0.1.6
 ```
 
 The release workflow uploads:
@@ -219,4 +197,4 @@ Recent readiness sims:
 - focused interaction matrix: food, copy reaction, Trash recovery, full deletion, respawn, latest corpse preservation, starvation death, live panel
 - blank 100-day soak: `14` starvation deaths, final alive, `191` files total
 - fed-every-other-day 100-day soak: `0` starvation deaths
-- first-session hook coverage: pose update, first visible movement schedule, delayed food, one-time stray artifact, safe unusual movement, watch folder button
+- first-session hook coverage: static live PNG, first visible movement schedule, delayed food, one-time stray artifact, safe unusual movement, pet monitor actions
