@@ -53,7 +53,11 @@ def install_boogart(username: str, paths: BoogartPaths | None = None) -> Boogart
         except OSError:
             pass
 
-    render_boogart_sprite(paths.desktop_boogart_png, "kitten", metadata=body_metadata(state, "kitten"))
+    state.memory["visual_pose"] = "idle1"
+    metadata = body_metadata(state, "kitten")
+    metadata["visual_state"] = "kitten_idle1"
+    metadata["motion"] = "idle1"
+    render_boogart_sprite(paths.desktop_boogart_png, "kitten_idle1", metadata=metadata)
     debug_log(paths, "install_render_body", path=paths.desktop_boogart_png, exists=paths.desktop_boogart_png.exists(), hash=file_hash(paths.desktop_boogart_png))
     remember_generated_file(state, paths.desktop_boogart_png)
     state.body_hash = file_hash(paths.desktop_boogart_png)
@@ -76,6 +80,8 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument("--name", default="friend", help="name to use for noninteractive setup")
     parser.add_argument("--sandbox", type=Path, help="run in an isolated directory")
     parser.add_argument("--live", action="store_true", help="show a tiny live terminal while Boogart runs")
+    parser.add_argument("--background", action="store_true", help="run quietly without the watch window")
+    parser.add_argument("--watch", action="store_true", help="show the Boogart watch window (default)")
     parser.add_argument("--debug-status", action="store_true", help="print path and debug information, then exit")
     args = parser.parse_args(argv)
 
@@ -126,8 +132,10 @@ def main(argv: list[str] | None = None) -> None:
 
         if args.live:
             run_live_heartbeat_loop(paths, config)
-        else:
+        elif args.background:
             run_heartbeat_loop(paths, config)
+        else:
+            run_watch_heartbeat_loop(paths, config)
 
 
 def run_setup_terminal(paths: BoogartPaths | None = None) -> None:
@@ -184,6 +192,15 @@ def run_live_heartbeat_loop(paths: BoogartPaths, config: RuntimeConfig | None = 
             time.sleep(interval_seconds)
     except KeyboardInterrupt:
         print("\nstopping boogart.")
+
+
+def run_watch_heartbeat_loop(paths: BoogartPaths, config: RuntimeConfig | None = None) -> None:
+    try:
+        from boogart.ui.watch import WatchUnavailableError, run_watch_window
+
+        run_watch_window(paths, config or RuntimeConfig.from_env())
+    except WatchUnavailableError:
+        run_heartbeat_loop(paths, config)
 
 
 @contextmanager

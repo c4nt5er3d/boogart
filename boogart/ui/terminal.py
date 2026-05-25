@@ -129,6 +129,7 @@ def render_live_panel(paths: BoogartPaths, state: BoogartState, events: list[str
     rows = [
         ("age", age_label(state, current_time)),
         ("mood", mood_label(state)),
+        ("motion", motion_label(state)),
         ("trust", meter(min(10, max(0, 3 + state.affection // 2)))),
         ("hunger", meter(round(state.hunger / 10))),
         ("wrongness", meter(min(10, max(0, state.phase + state.death_count // 2)))),
@@ -179,6 +180,27 @@ def mood_label(state: BoogartState) -> str:
     return "curious"
 
 
+def motion_label(state: BoogartState) -> str:
+    if state.lifecycle == "dead":
+        return "still"
+    if state.lifecycle == "archived":
+        return "folded"
+    pose = str(state.memory.get("visual_pose") or "idle1")
+    labels = {
+        "idle1": "breathing",
+        "idle2": "shifting",
+        "blink": "blinking",
+        "look": "watching",
+        "curl": "curled",
+        "sleep": "resting",
+        "stare": "too still",
+        "thin": "drawn thin",
+    }
+    if state.memory.get("food_wait_until"):
+        return "watching food"
+    return labels.get(pose, "breathing")
+
+
 def meter(value: int, width: int = 10) -> str:
     filled = max(0, min(width, value))
     return "█" * filled + "░" * (width - filled)
@@ -204,8 +226,27 @@ def recent_today_lines(paths: BoogartPaths, now: datetime, events: list[str]) ->
 def event_phrase(event: str) -> str:
     if event == "moved":
         return "found warm folder"
+    if event == "impossible_moved":
+        return "went somewhere wrong"
+    if event.startswith("pose:"):
+        pose = event.split(":", 1)[1]
+        return {
+            "blink": "blinked when watched",
+            "idle2": "shifted in place",
+            "curl": "curled near cache",
+            "sleep": "rested in the pixels",
+            "look": "looked toward food",
+            "stare": "stared from the corner",
+            "thin": "looked smaller",
+        }.get(pose, "shifted in place")
     if event.startswith("ate:"):
         return "ate offering"
+    if event.startswith("food_waiting:"):
+        return "waited near offering"
+    if event.startswith("food_seen:"):
+        return "found offering"
+    if event.startswith("stray:"):
+        return f"left {event.split(':', 1)[1]}"
     if event.startswith("txt:"):
         return f"left {event.split(':', 1)[1]}"
     if event.startswith("burrowed:"):

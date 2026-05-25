@@ -14,6 +14,7 @@ DARK_FUR: Color = (196, 126, 70, 255)
 EAR: Color = (241, 151, 151, 255)
 EYE: Color = (33, 41, 44, 255)
 BLOOD: Color = (132, 16, 24, 255)
+POSE_IDS = ("idle1", "idle2", "blink", "look", "curl", "sleep", "stare", "thin")
 
 
 BASE_SPRITE = [
@@ -45,6 +46,8 @@ STAGE_SPRITE_FILES.update({
 })
 for stage_id in STAGE_IDS:
     STAGE_SPRITE_FILES[f"{stage_id}_dead"] = f"{stage_id}_dead.png"
+    for pose in POSE_IDS:
+        STAGE_SPRITE_FILES[f"{stage_id}_{pose}"] = f"{stage_id}_{pose}.png"
     for level in range(1, 4):
         STAGE_SPRITE_FILES[f"{stage_id}_bloody{level}"] = f"{stage_id}_bloody{level}.png"
         STAGE_SPRITE_FILES[f"{stage_id}_dead_bite{level}"] = f"{stage_id}_dead_bite{level}.png"
@@ -205,7 +208,7 @@ def sprite_asset_candidates(assets_dir: Path, stage: str) -> list[Path]:
 
 
 def requires_exact_asset(stage: str) -> bool:
-    return "_bloody" in stage or "_bite" in stage
+    return "_bloody" in stage or "_bite" in stage or visual_pose(stage) is not None
 
 
 def base_stage_for_visual(stage: str) -> str:
@@ -213,7 +216,17 @@ def base_stage_for_visual(stage: str) -> str:
         return stage.split("_bloody", 1)[0]
     if "_bite" in stage:
         return stage.split("_bite", 1)[0]
+    pose = visual_pose(stage)
+    if pose:
+        return stage[: -(len(pose) + 1)]
     return stage
+
+
+def visual_pose(stage: str) -> str | None:
+    for pose in POSE_IDS:
+        if stage.endswith(f"_{pose}"):
+            return pose
+    return None
 
 
 def visual_stage_level(stage: str) -> int:
@@ -258,7 +271,9 @@ def render_boogart_sprite(
 
 
 def render_placeholder_boogart(path: Path, stage: str = "kitten", scale: int = 8, metadata: dict[str, str] | None = None) -> None:
-    sprite = apply_visual_blood(STAGE_SPRITES.get(base_stage_for_visual(stage), BASE_SPRITE), stage)
+    sprite = STAGE_SPRITES.get(base_stage_for_visual(stage), BASE_SPRITE)
+    sprite = apply_visual_pose(sprite, stage)
+    sprite = apply_visual_blood(sprite, stage)
 
     # Scale down residue to be tiny (2x instead of 8x)
     actual_scale = 2 if stage == "residue" else scale
@@ -272,6 +287,33 @@ def render_placeholder_boogart(path: Path, stage: str = "kitten", scale: int = 8
                 pixels.extend([PALETTE[cell]] * actual_scale)
 
     write_rgba_png(path, width, height, pixels, text_chunks=metadata)
+
+
+def apply_visual_pose(sprite: list[str], stage: str) -> list[str]:
+    pose = visual_pose(stage)
+    if not pose or pose == "idle1":
+        return sprite
+    rows = [list(row) for row in sprite]
+
+    if pose == "idle2":
+        paint_cells(rows, [(10, 4, "D"), (10, 9, "D"), (11, 4, "D"), (11, 9, "D")])
+    elif pose == "blink":
+        replace_cells(rows, "E", "I")
+    elif pose == "look":
+        replace_cells(rows, "E", "I")
+        paint_cells(rows, [(6, 5, "E"), (6, 10, "E")])
+    elif pose == "curl":
+        paint_cells(rows, [(10, 4, "."), (10, 9, "."), (11, 4, "."), (11, 9, "."), (12, 3, "."), (12, 10, ".")])
+        paint_cells(rows, [(10, 6, "F"), (10, 7, "F"), (11, 6, "D"), (11, 7, "D")])
+    elif pose == "sleep":
+        replace_cells(rows, "E", "I")
+        paint_cells(rows, [(10, 4, "."), (10, 9, "."), (11, 4, "."), (11, 9, "."), (12, 3, "."), (12, 10, ".")])
+    elif pose == "stare":
+        paint_cells(rows, [(6, 4, "E"), (6, 5, "E"), (6, 9, "E"), (6, 10, "E")])
+    elif pose == "thin":
+        paint_cells(rows, [(5, 1, "."), (5, 12, "."), (6, 1, "."), (6, 12, "."), (7, 1, "."), (7, 12, "."), (8, 2, "."), (8, 11, ".")])
+
+    return ["".join(row) for row in rows]
 
 
 def apply_visual_blood(sprite: list[str], stage: str) -> list[str]:
@@ -300,6 +342,19 @@ def apply_visual_blood(sprite: list[str], stage: str) -> list[str]:
         return paint(sprite, coords)
 
     return sprite
+
+
+def replace_cells(rows: list[list[str]], old: str, new: str) -> None:
+    for y, row in enumerate(rows):
+        for x, cell in enumerate(row):
+            if cell == old:
+                rows[y][x] = new
+
+
+def paint_cells(rows: list[list[str]], coords: list[tuple[int, int, str]]) -> None:
+    for y, x, value in coords:
+        if 0 <= y < len(rows) and 0 <= x < len(rows[y]):
+            rows[y][x] = value
 
 
 def paint(sprite: list[str], coords: list[tuple[int, int]]) -> list[str]:

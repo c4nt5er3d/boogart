@@ -7,7 +7,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from unittest.mock import patch
 
-from boogart.app import boogart_lock, install_boogart
+from boogart.app import boogart_lock, install_boogart, run_watch_heartbeat_loop
 from boogart.cleanup import cleanup
 from boogart.core.debug import debug_status
 from boogart.core.paths import BoogartPaths
@@ -16,6 +16,7 @@ from boogart.rendering.png import read_png_metadata
 from boogart.rendering.sprite import render_boogart_sprite
 from boogart.runtime import HeartbeatFrame, RuntimeConfig, artifact_metadata, body_metadata, corpse_metadata, movement_candidates, run_heartbeat, run_simulation
 from boogart.ui.terminal import render_live_panel
+from boogart.ui.watch import WatchUnavailableError, open_folder
 
 
 class GddRuntimeTests(unittest.TestCase):
@@ -966,6 +967,150 @@ class GddRuntimeTests(unittest.TestCase):
             self.assertTrue(any(event == "moved" for event in events))
             self.assertTrue(any(event.startswith("ate:first.food") for event in events))
             self.assertTrue(paths.log_file.exists())
+
+    def test_pose_update_changes_visual_metadata_without_extra_desktop_files(self) -> None:
+        now = datetime(2026, 1, 1, tzinfo=timezone.utc)
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            paths = make_paths(root)
+            paths.desktop.mkdir(parents=True)
+            paths.data_dir.mkdir()
+            state = BoogartState.new("jay")
+            state.current_folder = str(paths.desktop)
+            state.next_move_at = (now + timedelta(hours=1)).isoformat(timespec="seconds")
+            state.next_hunger_at = (now + timedelta(hours=1)).isoformat(timespec="seconds")
+            state.memory["visual_pose"] = "idle1"
+            render_boogart_sprite(paths.desktop_boogart_png, "kitten_idle1", metadata=body_metadata(state, "kitten"))
+            save_state(paths.state_file, state)
+
+            frame = run_heartbeat(paths, now)
+            metadata = read_png_metadata(paths.desktop_boogart_png)
+
+            self.assertTrue(any(event.startswith("pose:") for event in frame.events))
+            self.assertEqual(metadata["stage"], "kitten")
+            self.assertIn(metadata["motion"], {"idle2", "blink", "look", "curl", "sleep"})
+            self.assertEqual(sorted(path.name for path in paths.desktop.iterdir()), ["boogart.png"])
+
+    def test_first_visible_move_is_scheduled_in_steam_hook_window(self) -> None:
+        now = datetime(2026, 1, 1, tzinfo=timezone.utc)
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            paths = make_paths(root)
+            install_boogart("jay", paths)
+            state = load_state(paths.state_file)
+            state.birth_time = now.isoformat(timespec="seconds")
+            state.next_move_at = now.isoformat(timespec="seconds")
+            save_state(paths.state_file, state)
+
+            run_heartbeat(paths, now)
+            saved = load_state(paths.state_file)
+            next_move = datetime.fromisoformat(saved.next_move_at)
+
+            self.assertGreaterEqual(next_move, now + timedelta(minutes=8))
+            self.assertLessEqual(next_move, now + timedelta(minutes=20))
+            self.assertFalse(saved.memory.get("first_visible_move_done"))
+
+    def test_delayed_food_waits_then_eats_after_delay(self) -> None:
+        now = datetime(2026, 1, 1, tzinfo=timezone.utc)
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            paths = make_paths(root)
+            paths.desktop.mkdir(parents=True)
+            paths.downloads.mkdir()
+            paths.data_dir.mkdir()
+            food = paths.downloads / "patient.food"
+            food.write_text("x", encoding="utf-8")
+            state = BoogartState.new("jay")
+            state.current_folder = str(paths.desktop)
+            state.hunger = 50
+            state.next_hunger_at = (now + timedelta(hours=1)).isoformat(timespec="seconds")
+            state.next_move_at = (now + timedelta(hours=1)).isoformat(timespec="seconds")
+            state.memory["first_session_until"] = (now - timedelta(hours=1)).isoformat(timespec="seconds")
+            state.memory["food_meals_total"] = 1
+            state.memory["force_delayed_food"] = True
+            render_boogart_sprite(paths.desktop_boogart_png, "kitten", metadata=body_metadata(state, "kitten"))
+            save_state(paths.state_file, state)
+
+            waiting = run_heartbeat(paths, now, RuntimeConfig(dev_fast=True))
+            waiting_state = load_state(paths.state_file)
+            wait_until = datetime.fromisoformat(str(waiting_state.memory["food_wait_until"]))
+            before = run_heartbeat(paths, wait_until - timedelta(seconds=1), RuntimeConfig(dev_fast=True))
+            eaten = run_heartbeat(paths, wait_until + timedelta(seconds=1), RuntimeConfig(dev_fast=True))
+
+            self.assertIn("food_waiting:patient.food", waiting.events)
+            self.assertIn("food_waiting:patient.food", before.events)
+            self.assertIn("ate:patient.food", eaten.events)
+            self.assertFalse(food.exists())
+
+    def test_stray_event_creates_one_artifact_inside_scope(self) -> None:
+        now = datetime(2026, 1, 1, tzinfo=timezone.utc)
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            paths = make_paths(root)
+            paths.desktop.mkdir(parents=True)
+            paths.data_dir.mkdir()
+            state = BoogartState.new("jay")
+            state.current_folder = str(paths.desktop)
+            state.next_move_at = (now + timedelta(hours=1)).isoformat(timespec="seconds")
+            state.next_hunger_at = (now + timedelta(hours=1)).isoformat(timespec="seconds")
+            state.memory["force_stray_event"] = True
+            render_boogart_sprite(paths.desktop_boogart_png, "kitten", metadata=body_metadata(state, "kitten"))
+            save_state(paths.state_file, state)
+
+            first = run_heartbeat(paths, now)
+            second = run_heartbeat(paths, now + timedelta(minutes=1))
+            stray = paths.desktop / "second_body.png"
+            metadata = read_png_metadata(stray)
+
+            self.assertIn("stray:second_body.png", first.events)
+            self.assertFalse(any(event.startswith("stray:") for event in second.events))
+            self.assertTrue(stray.exists())
+            self.assertEqual(metadata["boogart_artifact"], "stray")
+            self.assertEqual(metadata["not_body"], "true")
+            self.assertTrue(str(stray).startswith(str(paths.desktop)))
+
+    def test_impossible_place_moves_once_to_deep_safe_folder(self) -> None:
+        now = datetime(2026, 1, 1, tzinfo=timezone.utc)
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            paths = make_paths(root)
+            deep = paths.desktop / "ordinary" / "under"
+            deep.mkdir(parents=True)
+            paths.data_dir.mkdir()
+            state = BoogartState.new("jay")
+            state.current_folder = str(paths.desktop)
+            state.next_hunger_at = (now + timedelta(hours=1)).isoformat(timespec="seconds")
+            state.next_move_at = (now + timedelta(hours=1)).isoformat(timespec="seconds")
+            state.memory["force_impossible_place"] = True
+            render_boogart_sprite(paths.desktop_boogart_png, "kitten", metadata=body_metadata(state, "kitten"))
+            save_state(paths.state_file, state)
+
+            frame = run_heartbeat(paths, now)
+            saved = load_state(paths.state_file)
+
+            self.assertIn("impossible_moved", frame.events)
+            self.assertEqual(Path(saved.current_folder), deep)
+            self.assertTrue((deep / "boogart.png").exists())
+            self.assertFalse(paths.desktop_boogart_png.exists())
+
+    def test_watch_open_folder_uses_platform_command(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            folder = Path(tmp)
+            with patch("boogart.ui.watch.sys.platform", "darwin"), patch("boogart.ui.watch.subprocess.Popen") as popen:
+                open_folder(folder)
+
+            popen.assert_called_once_with(["open", str(folder)])
+
+    def test_watch_window_falls_back_to_background_loop_if_unavailable(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            paths = make_paths(Path(tmp))
+            with (
+                patch("boogart.ui.watch.run_watch_window", side_effect=WatchUnavailableError("no display")),
+                patch("boogart.app.run_heartbeat_loop") as background,
+            ):
+                run_watch_heartbeat_loop(paths, RuntimeConfig(dev_fast=True))
+
+            background.assert_called_once()
 
     def test_hundred_day_no_feed_simulation_limits_starvation_and_files(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

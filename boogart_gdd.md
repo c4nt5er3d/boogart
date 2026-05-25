@@ -4,7 +4,7 @@
 
 Boogart is a cozy-horror desktop pet for PC. It lives as a PNG on the player's filesystem, eats `.food` offerings, wanders through safe user folders, leaves a sparse log, and becomes stranger when care is ignored.
 
-The game should feel like a tiny thing sharing the machine, not like a dashboard. The player learns by watching files change.
+The game should feel like a tiny thing sharing the machine, not like a dashboard. The player learns by watching files change, with an optional watcher window that makes the idle life visible without replacing the filesystem body.
 
 ## Player-Facing Files
 
@@ -21,10 +21,21 @@ Private engine state lives in the app data folder.
 The first Steam session must hook without punishing:
 
 - Boogart appears on the Desktop.
-- Boogart moves within a visible, shallow scope.
+- Boogart visibly changes pose within the first minute.
+- Boogart's first real folder movement is scheduled for the `8-20` active minute hook window.
 - The log changes.
 - A `.food` interaction works.
+- One mild anomaly can appear without creating malware-like disruption.
 - Hunger mood can escalate, but starvation death is blocked during the first two active hours.
+
+## Visible Idle Layer
+
+- `boogart.png` remains the canonical body.
+- Living bodies can render pose variants: `idle1`, `idle2`, `blink`, `look`, `curl`, `sleep`, `stare`, and `thin`.
+- Normal pose changes occur every `20-60` active seconds, faster when hungry.
+- Pose changes rewrite the existing live body only; they do not create extra files.
+- Bloodied corpse-eating variants take visual priority over pose variants for v1.
+- The Boogart Watch window shows the body, current folder, mood, motion, hunger, recent events, and clear `Pause`, `Open Current Folder`, panel toggle, and `Quit` controls.
 
 ## Care Loop
 
@@ -46,12 +57,23 @@ Starvation death rules:
 ## Feeding
 
 - `.food` lowers hunger by `55`.
+- The first feeding is immediate after discovery so the demo communicates the loop.
+- Later `.food` offerings can occasionally be watched for hours before being eaten.
 - Old corpses lower hunger by `80` total across three bites.
 - Bite one and bite two leave the corpse in place with bloodier body art and `corpse_bites` metadata.
 - Bite three removes the corpse.
 - Each corpse bite increases the live Boogart's bloody mouth/paw visual state up to `bloody3`.
 - The most recent corpse is never immediately edible.
 - Meals can produce rare comforting logs or residue.
+- Meals trigger a short comfort pose window.
+
+## Discovery Hooks
+
+- Once per save, Boogart can leave a nearby `second_body.png` stray artifact.
+- The stray file carries Boogart identity metadata but is marked `boogart_artifact=stray` and `not_body=true`.
+- Time-of-day wording can appear in log lines so different play times create subtly different screenshots.
+- Once per save, Boogart can make a safe unusual move into a deeper allowed folder and write a longer log line.
+- Discovery hooks must never write outside allowed roaming roots, follow symlinks, enter protected/system folders, or delete user files.
 
 ## Body Interaction Rules
 
@@ -74,6 +96,8 @@ Live bodies carry PNG `tEXt` metadata:
 - `generation`
 - `birth_time`
 - `stage`
+- `visual_state`
+- `motion`
 - `lineage`
 - `parent_id`
 - `death_count`
@@ -107,7 +131,7 @@ age / mood / trust / hunger / wrongness
 TODAY: recent events and logs
 ```
 
-This is a dev and streamer-friendly view. The filesystem files remain the main game.
+This is a dev and streamer-friendly view. The default Steam-facing view is the Watch window, while `--background` keeps the quiet daemon mode. The filesystem files remain the main game in all modes.
 
 ## Packaging
 
@@ -128,5 +152,8 @@ Release candidates must pass:
 - metadata smoke
 - focused interaction matrix
 - first-two-hours protection simulation
+- first-session visual pose and movement-hook simulation
+- delayed-food simulation
+- one-time stray artifact and safe unusual movement tests
 - 100-day no-feed soak under `15` starvation deaths and under `250` files
 - 100-day fed-every-other-day soak with `0` starvation deaths

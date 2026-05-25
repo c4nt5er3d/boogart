@@ -18,8 +18,10 @@ from boogart.rendering.sprite import render_boogart_sprite
 HEARTBEAT_SECONDS = 45
 ARCHIVE_EXTENSIONS = (".zip", ".rar", ".7z", ".tar", ".tar.gz", ".tgz")
 FIRST_MOVE_GRACE = timedelta(minutes=10)
+FIRST_SESSION_MOVE_MINUTES = (8, 20)
 FIRST_DAY_VISIBILITY = timedelta(hours=24)
 DEV_FAST_FIRST_MOVE_GRACE = timedelta(seconds=10)
+DEV_FAST_FIRST_SESSION_MOVE_SECONDS = (15, 40)
 DEV_FAST_FIRST_DAY_VISIBILITY = timedelta(minutes=1)
 MAX_LOGS_PER_DAY = 3
 MAX_TXT_PER_DAY = 1
@@ -41,6 +43,17 @@ MAX_BURROWS_TOTAL = 48
 MAX_BURROWS_PER_DAY = 1
 MAX_NEST_ARTIFACTS_TOTAL = 120
 MAX_GENERATED_FILES_TOTAL = 250
+POSE_IDS = ("idle1", "idle2", "blink", "look", "curl", "sleep", "stare", "thin")
+NORMAL_POSE_SECONDS = (20, 60)
+HUNGRY_POSE_SECONDS = (12, 30)
+DEV_FAST_POSE_SECONDS = (3, 8)
+FIRST_POSE_TARGET_COUNT = 2
+FIRST_POSE_VISIBILITY = timedelta(minutes=10)
+DEV_FAST_FIRST_POSE_VISIBILITY = timedelta(seconds=30)
+FIRST_STRAY_AFTER = timedelta(minutes=6)
+DEV_FAST_FIRST_STRAY_AFTER = timedelta(seconds=25)
+IMPOSSIBLE_PLACE_AFTER = timedelta(hours=4)
+DEV_FAST_IMPOSSIBLE_PLACE_AFTER = timedelta(minutes=4)
 NOTE_NAME_SEQUENCE = (
     "hello.txt",
     "is anyone there.txt",
@@ -169,9 +182,14 @@ def run_heartbeat(paths: BoogartPaths, now: datetime | None = None, config: Runt
         if frame.state.lifecycle == "alive":
             maintain_starvation(frame)
         if frame.state.lifecycle == "alive":
-            maybe_move(frame)
+            maybe_update_pose(frame)
+        if frame.state.lifecycle == "alive":
+            if not maybe_impossible_place(frame):
+                maybe_move(frame)
         if frame.state.lifecycle == "alive":
             maybe_drop_txt(frame)
+        if frame.state.lifecycle == "alive":
+            maybe_leave_stray(frame)
         if frame.state.lifecycle == "alive":
             maybe_nest(frame)
         if frame.state.lifecycle == "alive":
@@ -614,11 +632,29 @@ def eat_food(frame: HeartbeatFrame) -> None:
             break
 
         food = foods[0]
-        # Polish: Slow bite for .food files
+        # Polish: Slow bite for .food files. The first meal stays fast for
+        # Steam/demo clarity; later offerings can sit there long enough to feel watched.
         target_str = str(food)
         if frame.state.memory.get("food_target") != target_str:
             frame.state.memory["food_target"] = target_str
+            frame.state.memory.pop("food_wait_until", None)
+            if should_delay_food(frame, food):
+                wait_until = food_delay_until(frame)
+                frame.state.memory["food_wait_until"] = wait_until.isoformat(timespec="seconds")
+                frame.state.memory["food_waiting_since"] = frame.now.isoformat(timespec="seconds")
+                frame.events.append(f"food_waiting:{food.name}")
+                note(frame, "waiting near offering.")
+            else:
+                frame.events.append(f"food_seen:{food.name}")
             note(frame, "found something.")
+            return
+
+        wait_raw = frame.state.memory.get("food_wait_until")
+        if wait_raw and frame.now < parse_timestamp(str(wait_raw)):
+            frame.events.append(f"food_waiting:{food.name}")
+            if not repeated_recently(frame, "food_waiting_logged_at", days=1):
+                note(frame, "watching food.")
+                frame.state.memory["food_waiting_logged_at"] = frame.now.isoformat(timespec="seconds")
             return
 
         try:
@@ -627,6 +663,10 @@ def eat_food(frame: HeartbeatFrame) -> None:
             frame.state.affection += 1
             clear_starvation(frame)
             frame.state.memory.pop("food_target", None)
+            frame.state.memory.pop("food_wait_until", None)
+            frame.state.memory.pop("food_waiting_since", None)
+            frame.state.memory["food_meals_total"] = int(frame.state.memory.get("food_meals_total", 0) or 0) + 1
+            frame.state.memory["comfort_pose_until"] = (frame.now + (timedelta(seconds=20) if frame.config.dev_fast else timedelta(minutes=10))).isoformat(timespec="seconds")
 
             # Polish: Feeding residue (crumbs/bones) as PNG
             if can_create_artifact(frame, "nest") and random_for(frame.state, f"residue-{food.name}").random() < 0.3:
@@ -687,6 +727,26 @@ def corpse_bite_hunger_reduction(bite: int) -> int:
     if bite >= CORPSE_BITE_COUNT:
         return base + (CORPSE_HUNGER_REDUCTION % CORPSE_BITE_COUNT)
     return base
+
+
+def should_delay_food(frame: HeartbeatFrame, food: Path) -> bool:
+    if frame.state.memory.pop("force_delayed_food", False):
+        return True
+    if int(frame.state.memory.get("food_meals_total", 0) or 0) <= 0:
+        return False
+    if frame.now < parse_timestamp(str(frame.state.memory.get("first_session_until") or frame.state.birth_time)):
+        return False
+    if frame.state.hunger >= 90:
+        return False
+    return random_for(frame.state, f"food-delay-{food.name}-{frame.now.date().isoformat()}").random() < 0.2
+
+
+def food_delay_until(frame: HeartbeatFrame) -> datetime:
+    if frame.config.dev_fast:
+        seconds = random_for(frame.state, "food-delay-seconds").randint(30, 90)
+        return frame.now + timedelta(seconds=seconds)
+    hours = random_for(frame.state, "food-delay-hours").randint(8, 24)
+    return frame.now + timedelta(hours=hours)
 
 
 def corpse_bite_count(frame: HeartbeatFrame, corpse: Path) -> int:
@@ -766,6 +826,66 @@ def tick_hunger(frame: HeartbeatFrame) -> None:
         line = hunger_line(frame)
         if line:
             note(frame, line)
+
+
+def maybe_update_pose(frame: HeartbeatFrame) -> None:
+    if frame.state.lifecycle != "alive":
+        return
+    if frame.body_path and frame.body_path.is_symlink():
+        return
+
+    due_raw = frame.state.memory.get("next_pose_at")
+    first_window = boogart_age(frame) < first_pose_visibility(frame)
+    first_pose_count = int(frame.state.memory.get("first_pose_count", 0) or 0)
+    due = not due_raw or frame.now >= parse_timestamp(str(due_raw))
+    if first_window and first_pose_count < FIRST_POSE_TARGET_COUNT:
+        due = True
+    if not due:
+        return
+
+    pool = pose_pool(frame)
+    current = str(frame.state.memory.get("visual_pose") or "")
+    rng = random_for(frame.state, f"pose-{frame.now.isoformat(timespec='seconds')}")
+    choices = [pose for pose in pool if pose != current] or list(pool)
+    pose = rng.choice(choices)
+    frame.state.memory["visual_pose"] = pose
+    frame.state.memory["visual_pose_changed_at"] = frame.now.isoformat(timespec="seconds")
+    if first_window:
+        frame.state.memory["first_pose_count"] = first_pose_count + 1
+
+    if pose != current:
+        frame.events.append(f"pose:{pose}")
+    schedule_next_pose(frame)
+
+
+def pose_pool(frame: HeartbeatFrame) -> tuple[str, ...]:
+    comfort_until = frame.state.memory.get("comfort_pose_until")
+    if comfort_until and frame.now < parse_timestamp(str(comfort_until)):
+        return ("curl", "sleep", "blink", "idle2")
+    if frame.state.hunger >= 100:
+        return ("thin", "stare")
+    if frame.state.hunger >= 90:
+        return ("thin", "stare", "look")
+    if frame.state.hunger >= 70:
+        return ("look", "stare", "blink", "idle2")
+    if frame.state.hunger >= 40:
+        return ("look", "idle1", "idle2", "blink")
+    return ("idle1", "idle2", "blink", "curl", "sleep")
+
+
+def schedule_next_pose(frame: HeartbeatFrame) -> None:
+    if frame.config.dev_fast:
+        minimum, maximum = DEV_FAST_POSE_SECONDS
+    elif frame.state.hunger >= 70:
+        minimum, maximum = HUNGRY_POSE_SECONDS
+    else:
+        minimum, maximum = NORMAL_POSE_SECONDS
+    seconds = random_for(frame.state, f"pose-next-{frame.now.isoformat(timespec='seconds')}").randint(minimum, maximum)
+    frame.state.memory["next_pose_at"] = (frame.now + timedelta(seconds=seconds)).isoformat(timespec="seconds")
+
+
+def first_pose_visibility(frame: HeartbeatFrame) -> timedelta:
+    return DEV_FAST_FIRST_POSE_VISIBILITY if frame.config.dev_fast else FIRST_POSE_VISIBILITY
 
 
 def maybe_move(frame: HeartbeatFrame) -> None:
@@ -875,6 +995,108 @@ def maybe_move(frame: HeartbeatFrame) -> None:
         schedule_next_move(frame)
 
 
+def maybe_leave_stray(frame: HeartbeatFrame) -> None:
+    if frame.state.memory.get("stray_event_done"):
+        return
+    if not frame.state.memory.pop("force_stray_event", False):
+        if boogart_age(frame) < first_stray_after(frame):
+            return
+    if not can_create_artifact(frame, "stray"):
+        return
+
+    folder = Path(frame.state.current_folder or frame.paths.desktop)
+    if not safe_generated_folder(frame, folder):
+        return
+    filename = available_filename(folder, "second_body.png")
+    if not filename:
+        return
+
+    stage = stage_for_birth_time(frame.state.birth_time, frame.now, min(frame.state.affection // 3, 60)).id
+    visual_stage = f"{stage}_stare"
+    path = folder / filename
+    metadata = artifact_metadata(frame.state, stage, "stray")
+    metadata["visual_state"] = visual_stage
+    metadata["stray_event"] = "true"
+    metadata["not_body"] = "true"
+    try:
+        render_boogart_sprite(path, visual_stage, metadata=metadata)
+    except OSError as exc:
+        debug_log(frame.paths, "stray_render_failed", path=path, error=exc)
+        return
+
+    remember_generated_file(frame.state, path)
+    frame.state.memory["stray_event_done"] = True
+    frame.state.memory["stray_event_path"] = str(path)
+    frame.state.memory["stray_event_at"] = frame.now.isoformat(timespec="seconds")
+    frame.events.append(f"stray:{path.name}")
+    note(frame, f"the room feels {daypart_word(frame.now)}.")
+
+
+def first_stray_after(frame: HeartbeatFrame) -> timedelta:
+    return DEV_FAST_FIRST_STRAY_AFTER if frame.config.dev_fast else FIRST_STRAY_AFTER
+
+
+def safe_generated_folder(frame: HeartbeatFrame, folder: Path) -> bool:
+    if folder.is_symlink() or not folder.exists():
+        return False
+    if not any(is_within(folder, root) for root in roaming_roots(frame.paths)):
+        return False
+    return is_roamable(folder) or folder in roaming_roots(frame.paths)
+
+
+def maybe_impossible_place(frame: HeartbeatFrame) -> bool:
+    if frame.state.memory.get("impossible_place_done"):
+        return False
+    forced = bool(frame.state.memory.pop("force_impossible_place", False))
+    if not forced:
+        if not frame.state.memory.get("first_visible_move_done"):
+            return False
+        if boogart_age(frame) < impossible_place_after(frame):
+            return False
+    choices = impossible_place_candidates(frame)
+    if not choices:
+        return False
+    destination = random_for(frame.state, f"impossible-place-{frame.now.isoformat(timespec='minutes')}").choice(choices)
+    old_folder = Path(frame.state.current_folder or frame.paths.desktop)
+    old_body = old_folder / frame.state.body_name
+    if old_body.exists():
+        try:
+            old_body.unlink()
+        except OSError:
+            pass
+
+    frame.state.current_folder = str(destination)
+    frame.state.body_name = "boogart.png"
+    frame.body_path = destination / "boogart.png"
+    frame.state.favorites[str(destination)] = frame.state.favorites.get(str(destination), 0) + 1
+    frame.state.memory["impossible_place_done"] = True
+    frame.state.memory["impossible_place_at"] = frame.now.isoformat(timespec="seconds")
+    frame.state.memory["last_move_at"] = frame.now.isoformat(timespec="seconds")
+    frame.events.append("impossible_moved")
+    note(frame, f"i found a place under the place. it called itself {destination.name}.", force=True)
+    schedule_next_move(frame)
+    return True
+
+
+def impossible_place_after(frame: HeartbeatFrame) -> timedelta:
+    return DEV_FAST_IMPOSSIBLE_PLACE_AFTER if frame.config.dev_fast else IMPOSSIBLE_PLACE_AFTER
+
+
+def impossible_place_candidates(frame: HeartbeatFrame) -> list[Path]:
+    current = Path(frame.state.current_folder or frame.paths.desktop)
+    candidates: list[Path] = []
+    for root in roaming_roots(frame.paths):
+        for path in bounded_walk(root):
+            if not path.is_dir() or path == current or path.is_symlink():
+                continue
+            if not is_roamable(path):
+                continue
+            depth = movement_depth(frame, path)
+            if 2 <= depth <= MAX_SCAN_DEPTH or is_strange_folder(path):
+                candidates.append(path)
+    return candidates[:20]
+
+
 def maybe_drop_txt(frame: HeartbeatFrame) -> None:
     if frame.state.txt_count_today >= MAX_TXT_PER_DAY:
         return
@@ -921,6 +1143,10 @@ def render_body(frame: HeartbeatFrame) -> None:
     if visual_stage != stage:
         metadata["visual_state"] = visual_stage
         metadata["blood_level"] = str(cannibal_blood_level(frame))
+    elif frame.state.memory.get("visual_pose"):
+        metadata["visual_state"] = f"{stage}_{frame.state.memory['visual_pose']}"
+    if frame.state.memory.get("visual_pose"):
+        metadata["motion"] = str(frame.state.memory.get("visual_pose"))
     try:
         render_boogart_sprite(frame.body_path, visual_stage, metadata=metadata)
         frame.state.body_hash = file_hash(frame.body_path)
@@ -940,6 +1166,9 @@ def cannibal_blood_level(frame: HeartbeatFrame) -> int:
 def live_visual_stage(frame: HeartbeatFrame, stage: str) -> str:
     blood_level = cannibal_blood_level(frame)
     if blood_level <= 0:
+        pose = str(frame.state.memory.get("visual_pose") or "idle1")
+        if pose in POSE_IDS:
+            return f"{stage}_{pose}"
         return stage
     return f"{stage}_bloody{blood_level}"
 
@@ -1129,7 +1358,7 @@ def dialogue_line(frame: HeartbeatFrame) -> str:
     if frame.state.phase >= 4 and frame.state.copy_count:
         return decay_text("too many. i can hear them breathing.", frame.state.phase)
 
-    choices = ["is this the only place?", "everything has a name.", "the light is too sharp."]
+    choices = ["is this the only place?", "everything has a name.", "the light is too sharp.", f"the room feels {daypart_word(frame.now)}."]
     if frame.state.phase >= 2:
         choices.extend(("the folders have no windows.", "i found a path that felt like velvet.", "there is dust in the corners of the drive."))
     if frame.state.phase >= 3:
@@ -1143,6 +1372,17 @@ def dialogue_line(frame: HeartbeatFrame) -> str:
 
     line = random_for(frame.state, "dialogue").choice(choices)
     return decay_text(line, frame.state.phase)
+
+
+def daypart_word(now: datetime) -> str:
+    hour = now.astimezone().hour
+    if 5 <= hour < 11:
+        return "morning-warm"
+    if 11 <= hour < 17:
+        return "awake"
+    if 17 <= hour < 22:
+        return "evening-thin"
+    return "night-small"
 
 
 def decay_text(text: str, phase: int) -> str:
@@ -1517,6 +1757,14 @@ def renamed_body_candidate(folder: Path, state: BoogartState) -> Path | None:
 
 
 def schedule_next_move(frame: HeartbeatFrame) -> None:
+    if not frame.state.memory.get("first_visible_move_done"):
+        if frame.config.dev_fast:
+            minimum, maximum = DEV_FAST_FIRST_SESSION_MOVE_SECONDS
+            frame.state.next_move_at = (frame.now + timedelta(seconds=random_for(frame.state, "first-move-next").randint(minimum, maximum))).isoformat(timespec="seconds")
+        else:
+            minimum, maximum = FIRST_SESSION_MOVE_MINUTES
+            frame.state.next_move_at = (frame.now + jitter(frame.state, "first-move-next", minimum, maximum)).isoformat(timespec="seconds")
+        return
     if frame.config.dev_fast:
         frame.state.next_move_at = (frame.now + timedelta(seconds=random.randint(10, 30))).isoformat(timespec="seconds")
     else:
